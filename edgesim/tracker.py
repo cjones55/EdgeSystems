@@ -25,6 +25,8 @@ def log_plays(plays: pd.DataFrame, day: date, path: Path = LOG, sport: str = "nb
     cols = ["game", "home", "away", "market", "side", "line", "pick", "price", "book", "tier",
             "model_prob", "blended_prob", "market_prob", "ev", "kelly", "sharp_score"]
     df = plays[[c for c in cols if c in plays.columns]].copy()
+    if "units" in plays.columns:      # stake on the 1/2/3/5/10 scale
+        df.insert(0, "stake_u", plays["units"].values)
     df.insert(0, "day", str(day))
     df.insert(1, "sport", sport)
     df.insert(1, "logged_at", datetime.now().isoformat(timespec="seconds"))
@@ -84,7 +86,7 @@ def grade(path: Path = LOG, scores: dict | None = None) -> pd.DataFrame:
     log = pd.read_csv(path)
     if "sport" not in log.columns:
         log.insert(1, "sport", "nba")
-    for c in ("result", "units", "close_line", "clv_pts", "clv_prob"):
+    for c in ("result", "units", "profit_u", "close_line", "clv_pts", "clv_prob"):
         if c not in log.columns:
             log[c] = np.nan
     todo = log[log.result.isna()]
@@ -102,6 +104,8 @@ def grade(path: Path = LOG, scores: dict | None = None) -> pd.DataFrame:
             res = settle(r.market, r.side, r.line, *sc)
             log.loc[i, "result"] = res
             log.loc[i, "units"] = payout(res, r.price)
+            if "stake_u" in log.columns and not pd.isna(log.loc[i, "stake_u"]):
+                log.loc[i, "profit_u"] = log.loc[i, "units"] * log.loc[i, "stake_u"]
         c = closes.get((r.day, r.sport))
         if c is not None and not c.empty:
             m = c[(c.home == r.home) & (c.away == r.away) & (c.market == r.market)]
@@ -131,6 +135,8 @@ def summary(log: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(dict(
         bets=g.size(), wins=g.result.apply(lambda s: (s > 0).sum()),
         losses=g.result.apply(lambda s: (s < 0).sum()), units=g.units.sum(),
-        roi=g.units.mean(), avg_clv_pts=g.clv_pts.mean(),
+        roi=g.units.mean(),
+        profit_at_stake=(g.profit_u.sum() if "profit_u" in done.columns else np.nan),
+        avg_clv_pts=g.clv_pts.mean(),
         beat_close_pct=g.clv_pts.apply(lambda s: (s.dropna() > 0).mean() if s.notna().any() else np.nan),
     )).reset_index()

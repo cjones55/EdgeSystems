@@ -4,6 +4,7 @@
   demo       run the full pipeline on an archived date, offline
   sim        simulate one matchup with current ratings
   backtest   re-run the historical backtests and rewrite BACKTEST.md + backtests/
+  watch      re-check lines every N minutes and alert on new plays, early leans, steam
   grade      grade logged plays (results + closing line value)
   doctor     check which data sources are reachable from this machine
 """
@@ -47,12 +48,12 @@ def _show(res, out) -> None:
     if res.plays.empty:
         print("None cleared the bar today.")
     else:
-        print(res.plays[["tier", "game", "pick", "price", "book", "blended_prob", "ev", "kelly",
+        print(res.plays[["units", "tier", "game", "pick", "price", "book", "blended_prob", "ev", "kelly",
                          "sharp_score"]].to_string(index=False, float_format=lambda v: f"{v:.3f}"))
     if not res.props.empty and res.props.play.any():
         print("\n=== PROP PLAYS (top 15) ===")
         print(res.props[res.props.play].head(15)[
-            ["player", "stat", "pick", "price", "projection", "blended_prob", "ev"]
+            ["units", "player", "stat", "pick", "price", "projection", "blended_prob", "ev"]
         ].to_string(index=False, float_format=lambda v: f"{v:.3f}"))
     print(f"\nFull report: {out}")
 
@@ -81,6 +82,13 @@ def main(argv=None) -> int:
     b = sub.add_parser("backtest")
     b.add_argument("--sport", default="all", choices=SPORT_CHOICES + ["all"])
     b.add_argument("--cache", default=None, help="folder to cache simulated predictions in")
+    w = sub.add_parser("watch")
+    w.add_argument("--sport", default="all", choices=SPORT_CHOICES + ["all"])
+    w.add_argument("--every", type=float, default=15, help="minutes between scans")
+    w.add_argument("--until", default=None, help="stop at this local time, HH:MM")
+    w.add_argument("--no-action-network", action="store_true")
+    w.add_argument("--no-desktop", action="store_true", help="no desktop notifications")
+    w.add_argument("--once", action="store_true", help="one scan, then exit")
     sub.add_parser("grade")
     sub.add_parser("doctor")
     a = ap.parse_args(argv)
@@ -136,6 +144,10 @@ def main(argv=None) -> int:
         if cache:
             cache.mkdir(parents=True, exist_ok=True)
         print(f"Wrote {run(_sports(a.sport), cache_dir=cache)}")
+    elif a.cmd == "watch":
+        from .watch import watch
+        watch(_sports(a.sport), every_min=a.every, until=a.until,
+              action_network=not a.no_action_network, desktop=not a.no_desktop, once=a.once)
     elif a.cmd == "grade":
         log = tracker.grade()
         print(tracker.summary(log).to_string(index=False) if not log.empty else "No plays logged yet.")

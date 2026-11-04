@@ -209,6 +209,18 @@ def _snapshot(day: date, odds: pd.DataFrame, sport: str = "nba") -> pd.DataFrame
     return allsnap
 
 
+def save_split_history(day: date, splits: pd.DataFrame, sport: str = "nba") -> Path | None:
+    """Keep every public-betting pull, so ticket/money signals can be graded later
+    (there is no free history of them anywhere else)."""
+    if splits.empty:
+        return None
+    path = DATA / "splits_history" / f"{sport}_{day:%Y-%m-%d}.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    out = splits.assign(pulled_at=datetime.now().isoformat(timespec="seconds"))
+    out.to_csv(path, mode="a", header=not path.exists(), index=False)
+    return path
+
+
 def live_results(day: date, sport: str = "nba", history_seasons: int = 2) -> pd.DataFrame:
     """Completed games to rate teams on: ESPN for recent seasons. College sports
     start from the historical archive (same team keys) and add ESPN games after it."""
@@ -266,14 +278,34 @@ def live_context(day: date | None = None, with_props: bool = False,
         try:
             raw = odds_api.game_odds(sport=sport)
             snaps = _snapshot(day, raw, sport)
-            cons = odds_api.consensus(raw)
+            if "book" in snaps.columns:
+                snaps = snaps[snaps.book != "espn"]
+            cons = odds_api.consensus(raw, odds_api.my_books())
             first = snaps[snaps.pulled_at == snaps.pulled_at.min()]
-            open_cons = odds_api.consensus(first)
+            open_cons = odds_api.consensus(first, odds_api.my_books())
+            if odds_api.my_books():
+                notes.append("Prices from your books: " + ", ".join(odds_api.my_books())
+                             + " (EDGESIM_BOOKS in .env).")
         except Exception as e:  # network / quota
             notes.append(f"Odds API failed ({e}); falling back to ESPN lines at -110.")
     else:
         notes.append("ODDS_API_KEY not set: using ESPN's consensus spread/total at -110, "
                      "no moneylines, no props, no line shopping.")
+    espn_open = {}
+    if cons.empty and slate:
+        # snapshot ESPN's lines too, so line movement (and steam alerts) work without a key
+        rows = [dict(home=s["home"], away=s["away"], market=m, side=side,
+                     point=sign * s[k], price=-110, book="espn")
+                for s in slate for m, side, k, sign in (
+                    ("spread", "home", "espn_spread", 1), ("spread", "away", "espn_spread", -1),
+                    ("total", "over", "espn_total", 1), ("total", "under", "espn_total", 1))
+                if s.get(k) is not None]
+        if rows:
+            snaps = _snapshot(day, pd.DataFrame(rows), sport)
+            snaps = snaps[(snaps.get("book", pd.Series("", index=snaps.index)) == "espn")
+                          & snaps.side.isin(["home", "over"])]
+            first = snaps.sort_values("pulled_at").groupby(["home", "away", "market"]).first()
+            espn_open = first.point.to_dict()
 
     def pick(df, market, side, col):
         v = df[(df.market == market) & (df.side == side)][col] if not df.empty else pd.Series(dtype=float)
@@ -308,6 +340,8 @@ def live_context(day: date | None = None, with_props: bool = False,
                 notes.append(f"No odds matched for {gm.away_name} at {gm.home_name}; using ESPN line.")
             gm.spread = s.get("espn_spread")
             gm.total = s.get("espn_total")
+            gm.open_spread = espn_open.get((s["home"], s["away"], "spread"), gm.spread)
+            gm.open_total = espn_open.get((s["home"], s["away"], "total"), gm.total)
         games.append(gm)
 
     # --- public betting splits
@@ -316,6 +350,7 @@ def live_context(day: date | None = None, with_props: bool = False,
         try:
             split_df = fetch_action_network(day, sport)
             notes.append("Public betting % from Action Network (experimental source).")
+            save_split_history(day, split_df, sport)
         except Exception as e:
             notes.append(f"Action Network fetch failed ({e}).")
     if split_df.empty:
@@ -380,7 +415,11 @@ def props_to_lines(raw: pd.DataFrame, feat: pd.DataFrame) -> pd.DataFrame:
     raw = raw.assign(player=raw.player.map(lambda n: name_map.get(norm_name(n))))
     raw = raw.dropna(subset=["player", "line"])
     rows = []
+    from .providers.odds_api import my_books
+    books = my_books()
     for (player, stat), g in raw.groupby(["player", "stat"]):
+        if books and g.book.isin(books).any():
+            g = g[g.book.isin(books)]      # only lines you can bet
         line = g.line.mode().iloc[0]
         at = g[g.line == line]
         ov, un = at[at.side == "over"], at[at.side == "under"]
@@ -406,14 +445,14 @@ def write_report(res: DayResult, out_dir: Path = REPORTS) -> Path:
         lines.append("No game plays cleared the bar today. That is normal: the backtest shows "
                      "NBA sides and totals are very efficient.")
     else:
-        cols = ["tier", "game", "pick", "price", "book", "blended_prob", "market_prob", "ev",
+        cols = ["units", "tier", "game", "pick", "price", "book", "blended_prob", "market_prob", "ev",
                 "kelly", "sharp_score", "sharp_reasons"]
         lines.append(_md(res.plays[cols]))
     lines += ["", "## Simulations", _md(res.sims.drop(columns=["home", "away"], errors="ignore"))]
     if not res.props.empty:
         lines += ["", "## Prop plays",
                   _md(res.props[res.props.play].head(25)[
-                      ["player", "stat", "pick", "price", "book", "projection", "blended_prob",
+                      ["units", "player", "stat", "pick", "price", "book", "projection", "blended_prob",
                        "market_prob", "ev"]]) if res.props.play.any() else "No prop plays today."]
     stem = f"{day}_{res.ctx.sport}_{res.ctx.source}"
     path = out_dir / f"{stem}.md"

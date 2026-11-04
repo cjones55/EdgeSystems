@@ -25,6 +25,7 @@ python -m edgesim doctor              # checks every data source from your machi
 python -m edgesim today --sport all   # every sport's card -> reports/<date>_<sport>_live.md
 python -m edgesim today --sport nba --props   # also price NBA player props (more API credits)
 python -m edgesim sim Duke UNC --sport ncaab --spread -3.5 --total 150.5
+python -m edgesim watch --sport all   # re-check lines every 15 min, alert on early edges and steam
 python -m edgesim grade               # next day: grade plays vs results + closing line
 ```
 
@@ -39,6 +40,31 @@ python -m edgesim grade               # next day: grade plays vs results + closi
 | Sharp detection | `edgesim/sharp.py` | Reverse line movement (most bets on one side, line moves the other way), money vs ticket splits, steam moves, contrarian spots. Scored 0-100. |
 | Daily card | `edgesim/plays.py` | Blends the sim with the market's no-vig price, computes EV and a capped quarter-Kelly stake at the best available price, and tiers plays: **A** model + sharp agree, **B** model edge, **C** sharp lean. Plays the sharp side is against are dropped. |
 | Tracker | `edgesim/tracker.py` | Logs every live play and grades it on the result and on closing line value (CLV). |
+
+## Unit sizes
+
+Every play lists a stake on a 1u / 2u / 3u / 5u (max) / 10u (super max) scale, with no 4u or
+6-9u. Size follows the capped quarter-Kelly stake (1 unit = 0.5% of bankroll): under 0.75%
+is 1u, under 1.5% is 2u, under 2.5% is 3u, otherwise 5u. 10u needs all three of: model and
+sharp signal agree, Kelly at its 3% cap, and EV of at least 5%. Sharp leans without a model
+edge are 1u. The tracker logs the stake (`stake_u`) and reports profit at that stake.
+
+## Watch mode and alerts
+
+The backtest's clearest edge is timing: big line moves win 58-60% against the opening number
+but only about 50% against the close. `python -m edgesim watch` scans every 15 minutes
+(snapshotting ESPN lines even without an API key, and saving public betting % history) and
+alerts once per side for **NEW PLAY**, **EARLY** (sim far from the market and the line hasn't
+moved yet; logged as tier W so its closing line value is graded), **STEAM** (line already
+moved, marked with whether the sim agrees) and **SHARP** (reverse line move or money/ticket
+split). Alerts go to the terminal, `reports/alerts_<date>.md`, the app's **Alerts** tab, and
+desktop notifications on macOS.
+
+## Your books
+
+With an Odds API key, prices and lines come from the books in `EDGESIM_BOOKS` (default
+`fanduel,draftkings`), taking the better of the two, so every price on the card is one you
+can bet. Set `EDGESIM_BOOKS=all` to shop every book.
 
 ## Data sources
 

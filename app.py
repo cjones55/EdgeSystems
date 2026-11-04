@@ -33,6 +33,7 @@ def fmt(df: pd.DataFrame) -> pd.io.formats.style.Styler:
     f.update({c: "{:+.1f}" for c in ("fair_spread", "market_spread") if c in df.columns})
     f.update({c: "{:+.0f}" for c in ("price",) if c in df.columns})
     f.update({c: "{:.0f}%" for c in ("tickets_pct", "money_pct") if c in df.columns})
+    f.update({c: "{:.0f}u" for c in ("units",) if c in df.columns})
     return df.style.format(f, na_rep="")
 
 
@@ -49,6 +50,7 @@ with st.sidebar:
         st.caption(f"Archive: {SPORTS[sport].archive_note}")
     run = st.button("Run sims", type="primary")
     st.caption("Bets are tiered A (model + sharp agree), B (model edge), C (sharp lean). "
+               "Units: 1, 2, 3, 5 (max), 10 (super max). "
                "See the Backtest tab for what has and has not been proven.")
 
 if run:
@@ -68,7 +70,7 @@ res = st.session_state.get("res")
 if res is not None and res.ctx.sport != sport:
     res = None
 tabs = st.tabs(["Today's card", "Game simulator", "Props", "Public betting %", "Backtest",
-                "Tracker"])
+                "Tracker", "Alerts"])
 
 # ---------------------------------------------------------------- card
 with tabs[0]:
@@ -82,7 +84,7 @@ with tabs[0]:
             st.write("Nothing cleared the bar. That is the expected outcome on most days: NBA "
                      "lines are efficient and the system is built not to force bets.")
         else:
-            st.dataframe(fmt(res.plays[["tier", "game", "pick", "price", "book", "blended_prob",
+            st.dataframe(fmt(res.plays[["units", "tier", "game", "pick", "price", "book", "blended_prob",
                                         "market_prob", "model_prob", "ev", "kelly", "sharp_score",
                                         "tickets_pct", "money_pct", "sharp_reasons"]]),
                          use_container_width=True, hide_index=True)
@@ -202,3 +204,26 @@ with tabs[5]:
         st.dataframe(log, use_container_width=True, hide_index=True)
     else:
         st.info("No plays logged yet.")
+
+# ---------------------------------------------------------------- alerts
+with tabs[6]:
+    st.write("Line-movement alerts. The opening number is where the value is: big moves win "
+             "58-60% against the open in the backtest but only about 50% against the close. "
+             "For hands-off alerts all day, run `python -m edgesim watch` in a terminal.")
+    st.caption("NEW PLAY: clears the card's bar. EARLY: sim far from the market and the line "
+               "hasn't moved yet. STEAM: line already moved (the open was the value). "
+               "SHARP: reverse line move or money/ticket split.")
+    if st.button("Scan all sports now"):
+        from edgesim.watch import scan
+        with st.spinner("Scanning..."):
+            for k in SPORTS:
+                try:
+                    new, left = scan(date.today(), k, action_network=True)
+                    st.write(f"**{SPORTS[k].label}**: {len(new)} new alerts, {left} games still to start")
+                except Exception as e:
+                    st.write(f"**{SPORTS[k].label}**: scan failed ({e})")
+    af = ROOT / "reports" / f"alerts_{date.today():%Y-%m-%d}.md"
+    if af.exists():
+        st.markdown("\n".join(reversed(af.read_text().splitlines())))
+    else:
+        st.info("No alerts yet today.")

@@ -86,12 +86,26 @@ def player_props(event_id: str, markets=tuple(PROP_MARKETS), regions: str = "us"
     return parse_props(data)
 
 
-def consensus(odds: pd.DataFrame) -> pd.DataFrame:
+def my_books() -> list[str]:
+    """Books you can actually bet at (Odds API keys), from EDGESIM_BOOKS in .env.
+    Defaults to FanDuel and DraftKings; set EDGESIM_BOOKS=all to shop every book."""
+    v = os.environ.get("EDGESIM_BOOKS", "fanduel,draftkings").strip().lower()
+    return [] if v in ("", "all") else [b.strip() for b in v.split(",") if b.strip()]
+
+
+def consensus(odds: pd.DataFrame, books: list[str] | None = None) -> pd.DataFrame:
     """Most common line per game/market/side, and the best price offered AT that line
-    (comparing prices across different lines would be meaningless)."""
+    (comparing prices across different lines would be meaningless).
+
+    With ``books``, each game/market/side only uses those books' offers (the line
+    you can actually bet), falling back to every book when none of yours lists it."""
     if odds.empty:
         return odds
     keys = ["event_id", "home", "away", "market", "side"]
+    if books:
+        mine = odds.book.isin(books)
+        has_mine = mine.groupby([odds[k] for k in keys]).transform("any")
+        odds = odds[mine | ~has_mine]
     odds = odds.assign(_dec=odds.price.map(lambda p: p / 100 + 1 if p > 0 else 100 / -p + 1),
                        _pt=odds.point.fillna(0.0))
     mode = odds.groupby(keys)._pt.agg(lambda x: x.mode().iloc[0]).rename("_mode").reset_index()

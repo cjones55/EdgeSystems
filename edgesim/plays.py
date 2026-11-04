@@ -21,7 +21,7 @@ import pandas as pd
 from .odds import expected_value, kelly_fraction, no_vig_probs
 from .props import PropParams, prob_over
 from .ratings import TeamRatings
-from .sharp import MarketSplit, SharpConfig, detect
+from .sharp import MarketSplit, SharpConfig, detect, movement_toward_a
 
 
 @dataclass
@@ -109,6 +109,8 @@ def evaluate_game(g: GameMarket, ratings: TeamRatings, splits: dict | None = Non
         if split is None and open_line is not None and cur_line is not None:
             split = MarketSplit(market, open_line, cur_line, None, None)  # movement only
         sig = detect(split, cfg.sharp) if split else None
+        mv = movement_toward_a(split) if split else None
+        move = None if mv is None else (mv if side_ab == "A" else -mv)
         agrees = bool(sig and sig.side == side_ab and sig.score >= cfg.sharp_min_score)
         against = bool(sig and sig.side and sig.side != side_ab and sig.score >= cfg.sharp_min_score)
         cands.append(dict(
@@ -123,7 +125,7 @@ def evaluate_game(g: GameMarket, ratings: TeamRatings, splits: dict | None = Non
             if split and split.tickets_a is not None else None,
             money_pct=(split.money_a if side_ab == "A" else 100 - split.money_a)
             if split and split.money_a is not None else None,
-            _agrees=agrees, _against=against))
+            move=move, _agrees=agrees, _against=against))
 
     if g.spread is not None:
         ph, pp = res.p_cover(g.spread)
@@ -160,6 +162,29 @@ def tier(c: dict, cfg: PlayConfig) -> str | None:
     return None
 
 
+UNIT_SIZES = (1, 2, 3, 5, 10)
+
+
+def units(tier_label: str | None, ev: float, kelly: float) -> int | None:
+    """Map a play to the 1/2/3/5/10 unit scale (no 4 or 6-9).
+
+    Size follows the capped quarter-Kelly stake (1 unit = 0.5% of bankroll):
+    under 0.75% -> 1u, under 1.5% -> 2u, under 2.5% -> 3u, else 5u (max).
+    10u (super max) only when the model and the sharp signal agree, Kelly is at
+    its cap, and EV is at least 5%. Sharp leans without a model edge are 1u.
+    """
+    if not tier_label:
+        return None
+    if kelly <= 0:
+        return 1
+    if tier_label.startswith("A") and kelly >= 0.03 - 1e-9 and ev >= 0.05:
+        return 10
+    for cut, u in ((0.0075, 1), (0.015, 2), (0.025, 3)):
+        if kelly < cut:
+            return u
+    return 5
+
+
 def daily_card(games: list[GameMarket], ratings: TeamRatings, splits: dict | None = None,
                cfg: PlayConfig | None = None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Returns (plays, every candidate, per-game sim summaries)."""
@@ -173,6 +198,8 @@ def daily_card(games: list[GameMarket], ratings: TeamRatings, splits: dict | Non
     if allc.empty:
         return allc, allc, pd.DataFrame(sums)
     allc["tier"] = [tier(c, cfg) for c in cands]
+    allc["units"] = [units(t, c["ev"], c["kelly"]) if t else None
+                     for t, c in zip(allc.tier, cands)]
     plays = allc[allc.tier.notna()].sort_values(["tier", "ev"], ascending=[True, False])
     drop = ["_agrees", "_against"]
     return plays.drop(columns=drop), allc.drop(columns=drop), pd.DataFrame(sums)
@@ -223,4 +250,7 @@ def prop_plays(lines: pd.DataFrame, features: pd.DataFrame, pace: dict | None = 
     if out.empty:
         return out
     out["play"] = out.ev >= cfg.min_ev + 0.01   # props are noisier: need a bit more edge
+    # props never reach super max: no sharp signal backs them
+    out["units"] = [min(units("B", e, k), 5) if pl else None
+                    for pl, e, k in zip(out.play, out.ev, out.kelly)]
     return out.sort_values("ev", ascending=False)
