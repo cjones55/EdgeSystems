@@ -9,16 +9,16 @@ import pandas as pd
 import streamlit as st
 
 from edgesim import pipeline, tracker
-from edgesim.cli import _load_env
-from edgesim.gamesim import simulate_game
+from edgesim.cli import DEMO_DATES, _load_env
 from edgesim.providers import public_betting
 from edgesim.props import COMBOS, simulate_player
-from edgesim.teams import TEAMS
+from edgesim.resolve import display
+from edgesim.sports import SPORTS
 
 ROOT = Path(__file__).resolve().parent
 _load_env()
-st.set_page_config(page_title="EdgeSim NBA", layout="wide")
-st.title("EdgeSim NBA")
+st.set_page_config(page_title="EdgeSim", layout="wide")
+st.title("EdgeSim")
 
 PCT_COLS = ["model_prob", "market_prob", "blended_prob", "home_win"]
 
@@ -37,14 +37,16 @@ def fmt(df: pd.DataFrame) -> pd.io.formats.style.Styler:
 
 
 with st.sidebar:
+    sport = st.selectbox("Sport", list(SPORTS), format_func=lambda k: SPORTS[k].label)
     mode = st.radio("Data", ["Live (today)", "Demo (archived date)"])
     if mode.startswith("Live"):
         day = st.date_input("Date", date.today())
-        with_props = st.checkbox("Price player props (uses Odds API credits)", False)
+        with_props = SPORTS[sport].has_props and st.checkbox(
+            "Price player props (uses Odds API credits)", False)
         an = st.checkbox("Try Action Network splits (experimental)", False)
     else:
-        day = st.date_input("Archived date", date(2022, 1, 17), min_value=date(2011, 12, 25),
-                            max_value=date(2022, 6, 16))
+        day = st.date_input("Archived date", date.fromisoformat(DEMO_DATES[sport]))
+        st.caption(f"Archive: {SPORTS[sport].archive_note}")
     run = st.button("Run sims", type="primary")
     st.caption("Bets are tiered A (model + sharp agree), B (model edge), C (sharp lean). "
                "See the Backtest tab for what has and has not been proven.")
@@ -53,15 +55,18 @@ if run:
     with st.spinner("Loading data and simulating..."):
         try:
             if mode.startswith("Live"):
-                ctx = pipeline.live_context(day, with_props=with_props, action_network=an)
+                ctx = pipeline.live_context(day, with_props=with_props, action_network=an,
+                                            sport=sport)
             else:
-                ctx = pipeline.demo_context(day)
+                ctx = pipeline.demo_context(day, sport=sport)
             st.session_state.res = pipeline.run_day(ctx)
             pipeline.write_report(st.session_state.res)
         except Exception as e:  # show the problem instead of a stack trace
             st.error(f"Could not build the card: {e}")
 
 res = st.session_state.get("res")
+if res is not None and res.ctx.sport != sport:
+    res = None
 tabs = st.tabs(["Today's card", "Game simulator", "Props", "Public betting %", "Backtest",
                 "Tracker"])
 
@@ -72,7 +77,7 @@ with tabs[0]:
     else:
         for n in res.ctx.notes:
             st.caption(n)
-        st.subheader(f"Plays for {res.ctx.day}")
+        st.subheader(f"{SPORTS[res.ctx.sport].label} plays for {res.ctx.day}")
         if res.plays.empty:
             st.write("Nothing cleared the bar. That is the expected outcome on most days: NBA "
                      "lines are efficient and the system is built not to force bets.")
@@ -82,10 +87,10 @@ with tabs[0]:
                                         "tickets_pct", "money_pct", "sharp_reasons"]]),
                          use_container_width=True, hide_index=True)
             if res.ctx.source == "live" and st.button("Log these plays to the tracker"):
-                n = tracker.log_plays(res.plays, res.ctx.day)
+                n = tracker.log_plays(res.plays, res.ctx.day, sport=res.ctx.sport)
                 st.success(f"Tracker now holds {n} plays.")
         st.subheader("Game simulations")
-        st.dataframe(fmt(res.sims.drop(columns=["home", "away"])), use_container_width=True,
+        st.dataframe(fmt(res.sims.drop(columns=["home", "away"], errors="ignore")), use_container_width=True,
                      hide_index=True)
         with st.expander("Every market and side (including non-plays)"):
             st.dataframe(fmt(res.candidates.drop(columns=["home", "away", "side", "line"])),
@@ -100,29 +105,35 @@ with tabs[1]:
     if res is None:
         st.info("Run the card first so the simulator uses the same ratings.")
     else:
-        codes = sorted(TEAMS)
+        spc = SPORTS[res.ctx.sport]
+        keys = sorted(set(res.ctx.ratings.off) | {g.home for g in res.ctx.games} | {g.away for g in res.ctx.games},
+                      key=lambda k: display(k, res.ctx.sport))
+        name = {k: display(k, res.ctx.sport) for k in keys}
+        g0 = res.ctx.games[0] if res.ctx.games else None
         c1, c2, c3, c4 = st.columns(4)
-        away = c1.selectbox("Away", codes, index=codes.index("BOS"))
-        home = c2.selectbox("Home", codes, index=codes.index("MIA"))
-        spread = c3.number_input("Home spread", value=-2.5, step=0.5)
-        total = c4.number_input("Total", value=220.5, step=0.5)
-        hr = st.slider("Home rest days", 1, 4, 2)
-        ar = st.slider("Away rest days", 1, 4, 2)
-        eh, ea = res.ctx.ratings.expected(home, away, hr, ar)
-        sim = simulate_game(eh, ea)
+        away = c1.selectbox("Away", keys, index=keys.index(g0.away) if g0 and g0.away in keys else 0,
+                            format_func=name.get)
+        home = c2.selectbox("Home", keys, index=keys.index(g0.home) if g0 and g0.home in keys else 1,
+                            format_func=name.get)
+        spread = c3.number_input(f"Home {spc.spread_label.lower()}",
+                                 value=-1.5 if res.ctx.sport == "nhl" else -2.5, step=0.5)
+        total = c4.number_input("Total", value=float(round(res.ctx.ratings.league_avg * 2) / 2 + 0.5), step=0.5)
+        neutral = st.checkbox("Neutral site", False)
+        eh, ea = res.ctx.ratings.expected(home, away, neutral=neutral)
+        sim = spc.sim(eh, ea)
         s = sim.summary()
         m = st.columns(5)
-        m[0].metric(f"{home} win", f"{s['home_win']:.1%}")
-        m[1].metric("Fair spread", f"{home} {s['fair_spread']:+.1f}")
+        m[0].metric(f"{name[home]} win", f"{s['home_win']:.1%}")
+        m[1].metric(f"Fair {spc.spread_label.lower()}", f"{s['fair_spread']:+.1f}")
         m[2].metric("Fair total", f"{s['fair_total']:.1f}")
         cov, push = sim.p_cover(spread)
-        m[3].metric(f"{home} {spread:+g} covers", f"{cov:.1%}", f"push {push:.1%}", delta_color="off")
+        m[3].metric(f"{name[home]} {spread:+g} covers", f"{cov:.1%}", f"push {push:.1%}", delta_color="off")
         ov, push = sim.p_over(total)
         m[4].metric(f"Over {total:g}", f"{ov:.1%}", f"push {push:.1%}", delta_color="off")
         h1, h2 = st.columns(2)
-        h1.caption(f"{home} margin distribution")
+        h1.caption(f"{name[home]} margin distribution")
         h1.bar_chart(pd.Series(sim.margin).value_counts().sort_index())
-        h2.caption("Total points distribution")
+        h2.caption("Total distribution")
         h2.bar_chart(pd.Series(sim.total).value_counts().sort_index())
 
 # ---------------------------------------------------------------- props
@@ -149,12 +160,13 @@ with tabs[2]:
 # ---------------------------------------------------------------- splits
 with tabs[3]:
     sday = st.date_input("Splits for date", day, key="splits_day")
+    st.caption(f"Sport: {SPORTS[sport].label}")
     st.write("Side A is the **home team** for spread/ml and the **over** for totals. Lines are "
              "from side A's view (home spread like -4.5; ML like -150). Copy numbers from any "
              "public-betting source you trust.")
-    cur = public_betting.load_csv(sday)
+    cur = public_betting.load_csv(sday, sport)
     if cur.empty and res is not None:
-        cur = pd.DataFrame([dict(home=g.home, away=g.away, market=m,
+        cur = pd.DataFrame([dict(home=g.home_name or g.home, away=g.away_name or g.away, market=m,
                                  open_line=g.open_spread if m == "spread" else g.open_total,
                                  current_line=g.spread if m == "spread" else g.total,
                                  tickets_pct_a=None, money_pct_a=None)
@@ -162,13 +174,17 @@ with tabs[3]:
     edited = st.data_editor(cur if not cur.empty else pd.DataFrame(columns=public_betting.COLUMNS),
                             num_rows="dynamic", use_container_width=True)
     if st.button("Save splits"):
-        p = public_betting.save_csv(sday, edited)
+        p = public_betting.save_csv(sday, edited, sport)
         st.success(f"Saved {p}. Re-run the sims to use them.")
 
 # ---------------------------------------------------------------- backtest
 with tabs[4]:
     bt = ROOT / "BACKTEST.md"
     st.markdown(bt.read_text() if bt.exists() else "Run `python -m edgesim backtest` first.")
+    detail = ROOT / "backtests" / f"{sport.upper()}.md"
+    if detail.exists():
+        with st.expander(f"Full {SPORTS[sport].label} backtest", expanded=False):
+            st.markdown(detail.read_text())
 
 # ---------------------------------------------------------------- tracker
 with tabs[5]:

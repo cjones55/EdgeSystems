@@ -11,9 +11,17 @@ import os
 import pandas as pd
 import requests
 
-from ..teams import to_code
+from ..resolve import resolve
 
-BASE = "https://api.the-odds-api.com/v4/sports/basketball_nba"
+ROOT_URL = "https://api.the-odds-api.com/v4/sports"
+BASE = f"{ROOT_URL}/basketball_nba"
+
+
+def base(sport: str = "nba") -> str:
+    from ..sports import get
+    return f"{ROOT_URL}/{get(sport).odds_key}"
+
+
 PROP_MARKETS = {"player_points": "pts", "player_rebounds": "reb", "player_assists": "ast",
                 "player_threes": "fg3m", "player_points_rebounds_assists": "pra"}
 
@@ -31,17 +39,17 @@ def _get(url: str, params: dict) -> list | dict:
     return r.json()
 
 
-def parse_game_odds(data: list) -> pd.DataFrame:
+def parse_game_odds(data: list, sport: str = "nba") -> pd.DataFrame:
     """One row per (game, book, market, side)."""
     rows = []
     for ev in data:
-        home, away = to_code(ev["home_team"]), to_code(ev["away_team"])
+        home, away = resolve(ev["home_team"], sport), resolve(ev["away_team"], sport)
         for bk in ev.get("bookmakers", []):
             for mk in bk.get("markets", []):
                 for o in mk.get("outcomes", []):
                     name = o["name"]
                     if mk["key"] in ("h2h", "spreads"):
-                        side = "home" if to_code(name) == home else "away"
+                        side = "home" if name == ev["home_team"] else "away"
                     else:
                         side = name.lower()           # over / under
                     rows.append(dict(event_id=ev["id"], start=ev.get("commence_time"),
@@ -52,10 +60,10 @@ def parse_game_odds(data: list) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def game_odds(regions: str = "us") -> pd.DataFrame:
-    data = _get(f"{BASE}/odds", {"regions": regions, "markets": "h2h,spreads,totals",
-                                 "oddsFormat": "american"})
-    return parse_game_odds(data)
+def game_odds(regions: str = "us", sport: str = "nba") -> pd.DataFrame:
+    data = _get(f"{base(sport)}/odds", {"regions": regions, "markets": "h2h,spreads,totals",
+                                        "oddsFormat": "american"})
+    return parse_game_odds(data, sport)
 
 
 def parse_props(data: dict) -> pd.DataFrame:
@@ -79,12 +87,20 @@ def player_props(event_id: str, markets=tuple(PROP_MARKETS), regions: str = "us"
 
 
 def consensus(odds: pd.DataFrame) -> pd.DataFrame:
-    """Median line per game/market plus the best price available on each side."""
+    """Most common line per game/market/side, and the best price offered AT that line
+    (comparing prices across different lines would be meaningless)."""
     if odds.empty:
         return odds
-    g = odds.groupby(["event_id", "home", "away", "market", "side"])
-    out = g.agg(point=("point", "median"), best_price=("price", "max"),
-                n_books=("book", "nunique")).reset_index()
-    best_book = odds.loc[g.price.idxmax(), ["event_id", "market", "side", "book"]]
-    return out.merge(best_book.rename(columns={"book": "best_book"}),
-                     on=["event_id", "market", "side"])
+    keys = ["event_id", "home", "away", "market", "side"]
+    odds = odds.assign(_dec=odds.price.map(lambda p: p / 100 + 1 if p > 0 else 100 / -p + 1),
+                       _pt=odds.point.fillna(0.0))
+    mode = odds.groupby(keys)._pt.agg(lambda x: x.mode().iloc[0]).rename("_mode").reset_index()
+    at = odds.merge(mode, on=keys)
+    at = at[at._pt == at._mode]
+    g = at.groupby(keys)
+    best = at.loc[g._dec.idxmax()]
+    out = best[keys + ["price", "book"]].rename(columns={"price": "best_price", "book": "best_book"})
+    out = out.merge(mode.rename(columns={"_mode": "point"}), on=keys)
+    out = out.merge(odds.groupby(keys).book.nunique().rename("n_books").reset_index(), on=keys)
+    out.loc[out.market == "ml", "point"] = None
+    return out.reset_index(drop=True)

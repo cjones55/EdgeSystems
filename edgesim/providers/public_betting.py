@@ -2,7 +2,7 @@
 
 There is no free, official source for these numbers, so two inputs are
 supported:
-  1. CSV (always works): data/public_betting/YYYY-MM-DD.csv with columns
+  1. CSV (always works): data/public_betting/<sport>/YYYY-MM-DD.csv with columns
        home,away,market,open_line,current_line,tickets_pct_a,money_pct_a
      market is spread|total|ml; side A is the home team (spread/ml) or the
      over (total). Copy the numbers from any splits site you trust.
@@ -18,33 +18,34 @@ import pandas as pd
 import requests
 
 from ..sharp import MarketSplit
-from ..teams import to_code
+from ..resolve import resolve
 
 DIR = Path(__file__).resolve().parents[2] / "data" / "public_betting"
 COLUMNS = ["home", "away", "market", "open_line", "current_line", "tickets_pct_a", "money_pct_a"]
 
 
-def csv_path(day: date) -> Path:
-    return DIR / f"{day:%Y-%m-%d}.csv"
+def csv_path(day: date, sport: str = "nba") -> Path:
+    return DIR / sport / f"{day:%Y-%m-%d}.csv"
 
 
-def load_csv(day: date) -> pd.DataFrame:
-    p = csv_path(day)
+def load_csv(day: date, sport: str = "nba") -> pd.DataFrame:
+    p = csv_path(day, sport)
     if not p.exists():
         return pd.DataFrame(columns=COLUMNS)
     df = pd.read_csv(p)
     missing = set(COLUMNS) - set(df.columns)
     if missing:
         raise ValueError(f"{p} is missing columns: {sorted(missing)}")
-    df["home"] = df.home.map(to_code)
-    df["away"] = df.away.map(to_code)
+    df["home"] = df.home.map(lambda n: resolve(str(n), sport) or str(n))
+    df["away"] = df.away.map(lambda n: resolve(str(n), sport) or str(n))
     return df
 
 
-def save_csv(day: date, df: pd.DataFrame) -> Path:
-    DIR.mkdir(parents=True, exist_ok=True)
-    df[COLUMNS].to_csv(csv_path(day), index=False)
-    return csv_path(day)
+def save_csv(day: date, df: pd.DataFrame, sport: str = "nba") -> Path:
+    path = csv_path(day, sport)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df[COLUMNS].to_csv(path, index=False)
+    return path
 
 
 def to_splits(df: pd.DataFrame) -> dict[tuple[str, str, str], MarketSplit]:
@@ -58,7 +59,8 @@ def to_splits(df: pd.DataFrame) -> dict[tuple[str, str, str], MarketSplit]:
 
 
 # ---------------------------------------------------------------------------
-AN_URL = "https://api.actionnetwork.com/web/v2/scoreboard/nba"
+AN_URL = "https://api.actionnetwork.com/web/v2/scoreboard/{league}"
+AN_LEAGUE = {"nba": "nba", "nfl": "nfl", "nhl": "nhl", "ncaaf": "ncaaf", "ncaab": "ncaab"}
 
 
 def _pct(info: dict | None, kind: str) -> float | None:
@@ -68,14 +70,14 @@ def _pct(info: dict | None, kind: str) -> float | None:
         return None
 
 
-def parse_action_network(data: dict) -> pd.DataFrame:
+def parse_action_network(data: dict, sport: str = "nba") -> pd.DataFrame:
     """Defensive parser: skips anything that does not match the expected shape."""
     rows = []
     for g in data.get("games", []):
         try:
             teams = {t["id"]: t for t in g["teams"]}
-            home = to_code(teams[g["home_team_id"]].get("full_name", ""))
-            away = to_code(teams[g["away_team_id"]].get("full_name", ""))
+            home = resolve(teams[g["home_team_id"]].get("full_name", ""), sport)
+            away = resolve(teams[g["away_team_id"]].get("full_name", ""), sport)
         except (KeyError, TypeError):
             continue
         markets = g.get("markets") or {}
@@ -93,8 +95,8 @@ def parse_action_network(data: dict) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=COLUMNS)
 
 
-def fetch_action_network(day: date) -> pd.DataFrame:
-    r = requests.get(AN_URL, params={"bookIds": "15", "date": f"{day:%Y%m%d}", "periods": "event"},
+def fetch_action_network(day: date, sport: str = "nba") -> pd.DataFrame:
+    r = requests.get(AN_URL.format(league=AN_LEAGUE[sport]), params={"bookIds": "15", "date": f"{day:%Y%m%d}", "periods": "event"},
                      headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
     r.raise_for_status()
-    return parse_action_network(r.json())
+    return parse_action_network(r.json(), sport)

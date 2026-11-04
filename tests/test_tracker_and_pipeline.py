@@ -25,7 +25,7 @@ def test_log_and_grade(tmp_path, monkeypatch):
         dict(home="BOS", away="MIA", market="spread", side="away", point=4.5, price=-110, pulled_at="1"),
         dict(home="BOS", away="MIA", market="spread", side="home", point=-6.0, price=-110, pulled_at="2"),
         dict(home="BOS", away="MIA", market="spread", side="away", point=6.0, price=-110, pulled_at="2"),
-    ]).to_csv(snaps / "2026-11-04.csv", index=False)
+    ]).to_csv(snaps / "nba_2026-11-04.csv", index=False)
     plays = pd.DataFrame([dict(game="MIA @ BOS", home="BOS", away="MIA", market="spread",
                                side="home", line=-4.5, pick="BOS -4.5", price=-110, book="dk",
                                tier="A: model + sharp", model_prob=.6, blended_prob=.55,

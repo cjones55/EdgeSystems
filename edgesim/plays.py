@@ -18,7 +18,6 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from .gamesim import SimConfig, simulate_game
 from .odds import expected_value, kelly_fraction, no_vig_probs
 from .props import PropParams, prob_over
 from .ratings import TeamRatings
@@ -44,10 +43,14 @@ class GameMarket:
     open_spread: float | None = None
     open_total: float | None = None
     open_home_ml: float | None = None
+    neutral: bool = False
+    home_name: str | None = None         # display names (college teams are keyed by id)
+    away_name: str | None = None
 
 
 @dataclass
 class PlayConfig:
+    sport: str = "nba"
     blend: dict = field(default_factory=lambda: {"spread": 0.12, "total": 0.10, "ml": 0.04,
                                                  "prop": 0.5})
     min_ev: float = 0.01            # minimum EV (per unit) to list as a bet
@@ -55,7 +58,14 @@ class PlayConfig:
     sharp_min_score: float = 40.0
     kelly_fraction: float = 0.25
     kelly_cap: float = 0.03
-    sim: SimConfig = field(default_factory=lambda: SimConfig(n_sims=20000, seed=7))
+    n_sims: int = 20000
+    seed: int = 7
+
+    @classmethod
+    def for_sport(cls, sport: str, **kw) -> "PlayConfig":
+        from .sports import get
+        sp = get(sport)
+        return cls(sport=sport, blend=dict(sp.blend), sharp=sp.sharp, **kw)
     sharp: SharpConfig = field(default_factory=SharpConfig)
 
 
@@ -72,11 +82,14 @@ def evaluate_game(g: GameMarket, ratings: TeamRatings, splits: dict | None = Non
     """Returns (sim summary row, candidate plays for every side of every market)."""
     cfg = cfg or PlayConfig()
     splits = splits or {}
-    eh, ea = ratings.expected(g.home, g.away, g.home_rest, g.away_rest)
-    res = simulate_game(eh, ea, cfg.sim)
+    from .sports import get
+    eh, ea = ratings.expected(g.home, g.away, g.home_rest, g.away_rest, g.neutral)
+    res = get(cfg.sport).sim(eh, ea, n_sims=cfg.n_sims, seed=cfg.seed)
     s = res.summary()
-    game = f"{g.away} @ {g.home}"
-    summary = dict(game=game, home=g.home, away=g.away, start=g.start, proj_home=s["home_pts"],
+    hn, an = g.home_name or g.home, g.away_name or g.away
+    game = f"{an} {'vs' if g.neutral else '@'} {hn}"
+    p_tie = float((res.margin == 0).mean())
+    summary = dict(game=game, home=g.home, away=g.away, neutral=g.neutral, start=g.start, proj_home=s["home_pts"],
                    proj_away=s["away_pts"], home_win=s["home_win"], fair_spread=s["fair_spread"],
                    fair_total=s["fair_total"], market_spread=g.spread, market_total=g.total)
     cands = []
@@ -114,10 +127,10 @@ def evaluate_game(g: GameMarket, ratings: TeamRatings, splits: dict | None = Non
 
     if g.spread is not None:
         ph, pp = res.p_cover(g.spread)
-        add("spread", g.home, "A", ph, pp, g.spread_home_price, g.spread_away_price,
+        add("spread", hn, "A", ph, pp, g.spread_home_price, g.spread_away_price,
             f" {_fmt_line(g.spread)}", g.open_spread, g.spread, g.books.get(("spread", "home")),
             "home", g.spread)
-        add("spread", g.away, "B", 1 - ph - pp, pp, g.spread_away_price, g.spread_home_price,
+        add("spread", an, "B", 1 - ph - pp, pp, g.spread_away_price, g.spread_home_price,
             f" {_fmt_line(-g.spread)}", g.open_spread, g.spread, g.books.get(("spread", "away")),
             "away", -g.spread)
     if g.total is not None:
@@ -127,10 +140,10 @@ def evaluate_game(g: GameMarket, ratings: TeamRatings, splits: dict | None = Non
         add("total", "Under", "B", 1 - po - pp, pp, g.under_price, g.over_price, f" {g.total:g}",
             g.open_total, g.total, g.books.get(("total", "under")), "under", g.total)
     if g.home_ml is not None and g.away_ml is not None:
-        pw = res.p_home_win()
-        add("ml", g.home, "A", pw, 0.0, g.home_ml, g.away_ml, " ML", g.open_home_ml, g.home_ml,
+        pw = res.p_home_win()      # NFL ties are graded as a push on the moneyline
+        add("ml", hn, "A", pw, p_tie, g.home_ml, g.away_ml, " ML", g.open_home_ml, g.home_ml,
             g.books.get(("ml", "home")), "home", None)
-        add("ml", g.away, "B", 1 - pw, 0.0, g.away_ml, g.home_ml, " ML", None, None,
+        add("ml", an, "B", 1 - pw - p_tie, p_tie, g.away_ml, g.home_ml, " ML", None, None,
             g.books.get(("ml", "away")), "away", None)
     return summary, cands
 

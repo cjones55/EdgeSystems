@@ -19,18 +19,21 @@ LOG = ROOT / "data" / "plays_log.csv"
 SNAPS = ROOT / "data" / "snapshots"
 
 
-def log_plays(plays: pd.DataFrame, day: date, path: Path = LOG) -> int:
+def log_plays(plays: pd.DataFrame, day: date, path: Path = LOG, sport: str = "nba") -> int:
     if plays.empty:
         return 0
     cols = ["game", "home", "away", "market", "side", "line", "pick", "price", "book", "tier",
             "model_prob", "blended_prob", "market_prob", "ev", "kelly", "sharp_score"]
     df = plays[[c for c in cols if c in plays.columns]].copy()
     df.insert(0, "day", str(day))
+    df.insert(1, "sport", sport)
     df.insert(1, "logged_at", datetime.now().isoformat(timespec="seconds"))
     if path.exists():
         old = pd.read_csv(path)
         # one entry per day/game/market/side: keep the first time it was flagged
-        key = ["day", "game", "market", "side"]
+        if "sport" not in old.columns:
+            old.insert(1, "sport", "nba")
+        key = ["day", "sport", "game", "market", "side"]
         new_keys = df[key].astype(str).agg("|".join, axis=1)
         old_keys = set(old[key].astype(str).agg("|".join, axis=1))
         df = df[~new_keys.isin(old_keys)]
@@ -40,10 +43,10 @@ def log_plays(plays: pd.DataFrame, day: date, path: Path = LOG) -> int:
     return len(df)
 
 
-def closing_lines(day: str) -> pd.DataFrame:
+def closing_lines(day: str, sport: str = "nba") -> pd.DataFrame:
     """Consensus from the last odds snapshot of the day (run the daily command
     again close to tip-off to capture a real closing number)."""
-    p = SNAPS / f"{day}.csv"
+    p = SNAPS / f"{sport}_{day}.csv"
     if not p.exists():
         return pd.DataFrame()
     s = pd.read_csv(p)
@@ -79,6 +82,8 @@ def grade(path: Path = LOG, scores: dict | None = None) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame()
     log = pd.read_csv(path)
+    if "sport" not in log.columns:
+        log.insert(1, "sport", "nba")
     for c in ("result", "units", "close_line", "clv_pts", "clv_prob"):
         if c not in log.columns:
             log[c] = np.nan
@@ -86,18 +91,18 @@ def grade(path: Path = LOG, scores: dict | None = None) -> pd.DataFrame:
     if scores is None:
         from .providers import espn
         scores = {}
-        for day in todo.day.unique():
-            for g in espn.scoreboard(date.fromisoformat(day)):
+        for day, sport in todo[["day", "sport"]].drop_duplicates().itertuples(index=False):
+            for g in espn.scoreboard(date.fromisoformat(day), sport=sport):
                 if g["completed"]:
                     scores[(day, g["home"], g["away"])] = (g["home_pts"], g["away_pts"])
-    closes = {d: closing_lines(d) for d in todo.day.unique()}
+    closes = {(d, s): closing_lines(d, s) for d, s in todo[["day", "sport"]].drop_duplicates().itertuples(index=False)}
     for i, r in todo.iterrows():
         sc = scores.get((r.day, r.home, r.away))
         if sc is not None:
             res = settle(r.market, r.side, r.line, *sc)
             log.loc[i, "result"] = res
             log.loc[i, "units"] = payout(res, r.price)
-        c = closes.get(r.day)
+        c = closes.get((r.day, r.sport))
         if c is not None and not c.empty:
             m = c[(c.home == r.home) & (c.away == r.away) & (c.market == r.market)]
             mine, other = m[m.side == r.side], m[m.side != r.side]
@@ -120,7 +125,9 @@ def summary(log: pd.DataFrame) -> pd.DataFrame:
     done = log.dropna(subset=["result"])
     if done.empty:
         return pd.DataFrame()
-    g = done.groupby("tier")
+    if "sport" not in done.columns:
+        done = done.assign(sport="nba")
+    g = done.groupby(["sport", "tier"])
     return pd.DataFrame(dict(
         bets=g.size(), wins=g.result.apply(lambda s: (s > 0).sum()),
         losses=g.result.apply(lambda s: (s < 0).sum()), units=g.units.sum(),
