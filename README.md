@@ -14,7 +14,7 @@ python scripts/fetch_data.py          # historical data for every sport (needed 
 python -m pytest -q                   # 72 tests
 python -m edgesim demo --sport nba    # full pipeline on an archived date, offline
 python -m edgesim demo --sport ncaaf  # same for nfl, nhl, ncaaf, ncaab
-streamlit run app.py                  # dashboard at http://localhost:8501
+streamlit run app.py                  # then open http://localhost:8501
 ```
 
 For live daily plays:
