@@ -75,11 +75,73 @@ def parse_scoreboard(data: dict, sport: str = "nba") -> list[dict]:
                  home_pts=int(h["score"]) if status.get("completed") else None,
                  away_pts=int(a["score"]) if status.get("completed") else None,
                  season_type=ev.get("season", {}).get("type"))
-        odds = (comp.get("odds") or [{}])[0]
-        g["espn_spread"] = odds.get("spread")          # home spread
-        g["espn_total"] = odds.get("overUnder")
+        g.update(parse_odds((comp.get("odds") or [{}])[0]))
         games.append(g)
     return games
+
+
+def _american(v) -> float | None:
+    """ESPN prices come as numbers or strings like "-180", "+150", "EVEN"."""
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v) if v != 0 else None
+    t = str(v).strip().upper()
+    if t in ("EVEN", "EV", "PK"):
+        return 100.0
+    try:
+        x = float(t.replace("+", ""))
+        # ESPN posts placeholders like -100000 on huge mismatches: treat as no line
+        return x if 100 <= abs(x) <= 5000 else None
+    except ValueError:
+        return None
+
+
+def _line(v) -> float | None:
+    """Lines like "-3.5", "o49.5", "u49.5", "PK"."""
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    t = str(v).strip().lower().lstrip("ou")
+    if t in ("pk", "even"):
+        return 0.0
+    try:
+        return float(t)
+    except ValueError:
+        return None
+
+
+def _dig(d, *path):
+    for k in path:
+        if not isinstance(d, dict):
+            return None
+        d = d.get(k)
+    return d
+
+
+def parse_odds(odds: dict) -> dict:
+    """ESPN's consensus odds for one game: spread, total, moneyline, their prices,
+    and opening numbers when ESPN lists them. Missing pieces come back as None."""
+    h, a = odds.get("homeTeamOdds") or {}, odds.get("awayTeamOdds") or {}
+    out = dict(
+        espn_spread=_line(odds.get("spread")),
+        espn_total=_line(odds.get("overUnder")),
+        espn_home_ml=_american(h.get("moneyLine")) or _american(_dig(odds, "moneyline", "home", "close", "odds")),
+        espn_away_ml=_american(a.get("moneyLine")) or _american(_dig(odds, "moneyline", "away", "close", "odds")),
+        espn_spread_home_price=_american(h.get("spreadOdds")) or _american(_dig(odds, "pointSpread", "home", "close", "odds")),
+        espn_spread_away_price=_american(a.get("spreadOdds")) or _american(_dig(odds, "pointSpread", "away", "close", "odds")),
+        espn_over_price=_american(odds.get("overOdds")) or _american(_dig(odds, "total", "over", "close", "odds")),
+        espn_under_price=_american(odds.get("underOdds")) or _american(_dig(odds, "total", "under", "close", "odds")),
+        espn_open_spread=_line(_dig(odds, "pointSpread", "home", "open", "line")),
+        espn_open_total=_line(_dig(odds, "total", "over", "open", "line")),
+        espn_open_home_ml=_american(_dig(odds, "moneyline", "home", "open", "odds")),
+    )
+    if out["espn_spread"] is None:
+        out["espn_spread"] = _line(_dig(odds, "pointSpread", "home", "close", "line"))
+    if out["espn_total"] is None:
+        out["espn_total"] = _line(_dig(odds, "total", "over", "close", "line"))
+    return out
 
 
 def scoreboard(day: date, live: bool = False, sport: str = "nba") -> list[dict]:

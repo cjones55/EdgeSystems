@@ -289,23 +289,27 @@ def live_context(day: date | None = None, with_props: bool = False,
         except Exception as e:  # network / quota
             notes.append(f"Odds API failed ({e}); falling back to ESPN lines at -110.")
     else:
-        notes.append("ODDS_API_KEY not set: using ESPN's consensus spread/total at -110, "
-                     "no moneylines, no props, no line shopping.")
+        notes.append("ODDS_API_KEY not set: using ESPN's consensus lines (spread, total and "
+                     "moneyline when ESPN lists them). No props or FanDuel/DraftKings shopping.")
     espn_open = {}
     if cons.empty and slate:
         # snapshot ESPN's lines too, so line movement (and steam alerts) work without a key
         rows = [dict(home=s["home"], away=s["away"], market=m, side=side,
-                     point=sign * s[k], price=-110, book="espn")
-                for s in slate for m, side, k, sign in (
-                    ("spread", "home", "espn_spread", 1), ("spread", "away", "espn_spread", -1),
-                    ("total", "over", "espn_total", 1), ("total", "under", "espn_total", 1))
-                if s.get(k) is not None]
+                     point=None if k is None else sign * s[k],
+                     price=s.get(pk) or -110, book="espn")
+                for s in slate for m, side, k, sign, pk in (
+                    ("spread", "home", "espn_spread", 1, "espn_spread_home_price"),
+                    ("spread", "away", "espn_spread", -1, "espn_spread_away_price"),
+                    ("total", "over", "espn_total", 1, "espn_over_price"),
+                    ("total", "under", "espn_total", 1, "espn_under_price"),
+                    ("ml", "home", None, 1, "espn_home_ml"), ("ml", "away", None, 1, "espn_away_ml"))
+                if (s.get(k) is not None if k else s.get(pk) is not None)]
         if rows:
             snaps = _snapshot(day, pd.DataFrame(rows), sport)
             snaps = snaps[(snaps.get("book", pd.Series("", index=snaps.index)) == "espn")
                           & snaps.side.isin(["home", "over"])]
             first = snaps.sort_values("pulled_at").groupby(["home", "away", "market"]).first()
-            espn_open = first.point.to_dict()
+            espn_open = {k: (r.price if k[2] == "ml" else r.point) for k, r in first.iterrows()}
 
     def pick(df, market, side, col):
         v = df[(df.market == market) & (df.side == side)][col] if not df.empty else pd.Series(dtype=float)
@@ -340,8 +344,18 @@ def live_context(day: date | None = None, with_props: bool = False,
                 notes.append(f"No odds matched for {gm.away_name} at {gm.home_name}; using ESPN line.")
             gm.spread = s.get("espn_spread")
             gm.total = s.get("espn_total")
-            gm.open_spread = espn_open.get((s["home"], s["away"], "spread"), gm.spread)
-            gm.open_total = espn_open.get((s["home"], s["away"], "total"), gm.total)
+            gm.spread_home_price = s.get("espn_spread_home_price") or -110
+            gm.spread_away_price = s.get("espn_spread_away_price") or -110
+            gm.over_price = s.get("espn_over_price") or -110
+            gm.under_price = s.get("espn_under_price") or -110
+            gm.home_ml, gm.away_ml = s.get("espn_home_ml"), s.get("espn_away_ml")
+            k3 = (s["home"], s["away"])
+            # ESPN's own opening line when it lists one, else our first snapshot of the day
+            def first_of(*vals):
+                return next((v for v in vals if v is not None), None)
+            gm.open_spread = first_of(s.get("espn_open_spread"), espn_open.get((*k3, "spread")), gm.spread)
+            gm.open_total = first_of(s.get("espn_open_total"), espn_open.get((*k3, "total")), gm.total)
+            gm.open_home_ml = first_of(s.get("espn_open_home_ml"), espn_open.get((*k3, "ml")), gm.home_ml)
         games.append(gm)
 
     # --- public betting splits

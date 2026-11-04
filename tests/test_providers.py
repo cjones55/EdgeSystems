@@ -88,3 +88,26 @@ def test_action_network_parser_is_defensive():
     assert df.iloc[0].home == "BOS" and df.iloc[0].tickets_pct_a == 70
     sp = to_splits(df)[("BOS", "MIA", "spread")]
     assert sp.money_a == 45
+
+
+def test_espn_odds_moneyline_both_formats():
+    from edgesim.providers.espn import parse_odds
+    old = parse_odds({"spread": -3.5, "overUnder": 49.5,
+                      "homeTeamOdds": {"moneyLine": -160, "spreadOdds": -115},
+                      "awayTeamOdds": {"moneyLine": 135, "spreadOdds": -105}})
+    assert (old["espn_home_ml"], old["espn_away_ml"]) == (-160, 135)
+    assert old["espn_spread_home_price"] == -115 and old["espn_open_spread"] is None
+    new = parse_odds({"moneyline": {"home": {"open": {"odds": "-170"}, "close": {"odds": "-140"}},
+                                    "away": {"close": {"odds": "+118"}}},
+                      "pointSpread": {"home": {"open": {"line": "-4.5"}, "close": {"line": "-2.5", "odds": "-115"}}},
+                      "total": {"over": {"open": {"line": "o48.5"}, "close": {"line": "o49.5", "odds": "EVEN"}}}})
+    assert (new["espn_home_ml"], new["espn_away_ml"], new["espn_open_home_ml"]) == (-140, 118, -170)
+    assert (new["espn_spread"], new["espn_open_spread"], new["espn_spread_home_price"]) == (-2.5, -4.5, -115)
+    assert (new["espn_total"], new["espn_open_total"], new["espn_over_price"]) == (49.5, 48.5, 100)
+
+
+def test_espn_odds_off_and_placeholder_prices_are_missing():
+    from edgesim.providers.espn import parse_odds
+    o = parse_odds({"spread": -34.5, "moneyline": {"home": {"close": {"odds": "OFF"}, "open": {"odds": "-100000"}},
+                                                   "away": {"close": {"odds": "OFF"}, "open": {"odds": "+5000"}}}})
+    assert o["espn_home_ml"] is None and o["espn_away_ml"] is None and o["espn_open_home_ml"] is None
