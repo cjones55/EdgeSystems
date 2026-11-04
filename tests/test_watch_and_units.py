@@ -101,3 +101,8 @@ def test_scan_end_to_end_offline(tmp_path, monkeypatch):
     assert (tmp_path / "alerts_2021-11-14.md").exists()
     logged = pd.read_csv(log)
     assert set(logged.stake_u.dropna()) <= set(UNIT_SIZES)
+
+
+def test_units_ignore_missing_tier_values():
+    # pandas 3 stores a mixed None/str column as strings with NaN for the gaps
+    assert units(float("nan"), 0.05, 0.02) is None

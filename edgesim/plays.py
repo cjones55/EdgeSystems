@@ -173,7 +173,7 @@ def units(tier_label: str | None, ev: float, kelly: float) -> int | None:
     10u (super max) only when the model and the sharp signal agree, Kelly is at
     its cap, and EV is at least 5%. Sharp leans without a model edge are 1u.
     """
-    if not tier_label:
+    if not isinstance(tier_label, str) or not tier_label:
         return None
     if kelly <= 0:
         return 1
@@ -197,9 +197,10 @@ def daily_card(games: list[GameMarket], ratings: TeamRatings, splits: dict | Non
     allc = pd.DataFrame(cands)
     if allc.empty:
         return allc, allc, pd.DataFrame(sums)
-    allc["tier"] = [tier(c, cfg) for c in cands]
-    allc["units"] = [units(t, c["ev"], c["kelly"]) if t else None
-                     for t, c in zip(allc.tier, cands)]
+    tiers = [tier(c, cfg) for c in cands]
+    allc["tier"] = tiers
+    allc["units"] = pd.array([units(t, c["ev"], c["kelly"]) for t, c in zip(tiers, cands)],
+                             dtype="Int64")
     plays = allc[allc.tier.notna()].sort_values(["tier", "ev"], ascending=[True, False])
     drop = ["_agrees", "_against"]
     return plays.drop(columns=drop), allc.drop(columns=drop), pd.DataFrame(sums)
