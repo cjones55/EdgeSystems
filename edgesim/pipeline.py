@@ -80,7 +80,11 @@ def run_day(ctx: DayContext, cfg: PlayConfig | None = None,
             pace[s.home] = pace[s.away] = t
             blow = max(0.0, abs(s.proj_home - s.proj_away) - 8)
             mfac[s.home] = mfac[s.away] = 1 - 0.01 * blow
-        props = prop_plays(ctx.prop_lines, ctx.player_features, pace, mfac, prop_params, cfg)
+        if ctx.sport == "nfl":
+            from .nfl_props import price_props
+            props = price_props(ctx.prop_lines, ctx.player_features, cfg=cfg)
+        else:
+            props = prop_plays(ctx.prop_lines, ctx.player_features, pace, mfac, prop_params, cfg)
     return DayResult(ctx, plays, cands, sims, props)
 
 
@@ -188,6 +192,18 @@ def demo_context(day: str | date, with_props: bool = True, top_players: int = 7,
             ctx.prop_lines = pd.DataFrame(rows)
             ctx.notes.append("Demo prop lines are proxies (player's last-10 average rounded to "
                              "x.5 at -115), not real sportsbook lines.")
+    if with_props and sport == "nfl":
+        from . import nfl_props as N
+        try:
+            pg = N.load_player_games()
+            feat = N.project_upcoming(pg, [(g.home, g.away, g.spread, g.total) for g in games], d)
+            ctx.player_features = feat
+            ctx.prop_lines = N.proxy_lines(feat, pg[pg.date < d])
+            ctx.notes.append("Demo NFL prop lines are proxies (player's last-8 median rounded to "
+                             "x.5 at -115; anytime TD from his recent scoring rate), not real sportsbook lines. "
+                                 "Demo mode also has no injury news.")
+        except FileNotFoundError as e:
+            ctx.notes.append(str(e))
     return ctx
 
 
@@ -381,8 +397,11 @@ def live_context(day: date | None = None, with_props: bool = False,
             ctx.injuries = espn.injuries(sport)
         except Exception as e:
             notes.append(f"Injury report unavailable ({e}).")
+    elif sport == "nfl":
+        # projections are free (box scores + props explorer); lines only when asked
+        _nfl_props(ctx, day, games, odds_api, espn, fetch_lines=with_props)
     elif with_props:
-        notes.append(f"Player props are NBA-only for now; skipped for {sp.label}.")
+        notes.append(f"Player props cover the NBA and NFL; skipped for {sp.label}.")
     if with_props and sp.has_props and slate:
         pg = espn.player_games(pd.DataFrame([dict(event_id=e, date=dt) for e, dt in _event_ids(results, d, sport)]))
         feat = project_players(pg, [(g.home, g.away) for g in games], d, load_prop_params())
@@ -405,6 +424,47 @@ def live_context(day: date | None = None, with_props: bool = False,
         else:
             notes.append("Props need ODDS_API_KEY for real lines.")
     return ctx
+
+
+def _nfl_props(ctx: DayContext, day: date, games: list, odds_api, espn,
+               fetch_lines: bool = True) -> None:
+    """Project NFL players for this slate and price their props."""
+    from . import nfl_props as N
+    notes = ctx.notes
+    try:
+        pg = N.load_player_games()
+    except FileNotFoundError as e:
+        notes.append(str(e))
+        return
+    out_names = set()
+    try:
+        inj = espn.injuries("nfl")
+        bad = inj[inj.status.str.lower().str.contains("out|doubtful|injured reserve|ir", regex=True)]
+        out_names = set(bad.player.str.lower())
+    except Exception as e:
+        notes.append(f"NFL injury report unavailable ({e}); injured players may be projected.")
+    feat = N.project_upcoming(pg, [(g.home, g.away, g.spread, g.total) for g in games],
+                              pd.Timestamp(day), out_players=out_names)
+    ctx.player_features = feat
+    stale = (pd.Timestamp(day) - pg.date.max()).days
+    if stale > 9:
+        notes.append(f"NFL player stats end {pg.date.max().date()}: run "
+                     "`python scripts/fetch_data.py nfl --refresh-current` for the latest week.")
+    if not fetch_lines:
+        return
+    if not odds_api.api_key():
+        notes.append("NFL props need ODDS_API_KEY for real lines; projections are on the Props tab.")
+        return
+    raw = []
+    for gm in games:
+        ev = gm.books.get("event_id")
+        if ev:
+            try:
+                raw.append(odds_api.player_props(ev, sport="nfl"))
+            except Exception as e:
+                notes.append(f"Props failed for {gm.away}@{gm.home}: {e}")
+    if raw:
+        ctx.prop_lines = N.lines_from_odds(pd.concat(raw), odds_api.my_books())
 
 
 def _event_ids(results: pd.DataFrame, d: pd.Timestamp, sport: str) -> list:

@@ -1,6 +1,7 @@
 """Download the historical datasets used for backtesting and demo mode.
 
   NBA/NFL/NHL results + lines 2011-2022   github.com/flancast90/sportsbookreview-scraper (MIT)
+  NFL player stats 2016-2026 + schedule  github.com/nflverse (CC-BY 4.0 / MIT)
   NBA player box scores 2010-2024         github.com/NocturneBear/NBA-Data-2010-2024 (MIT)
   College football 2015-2026 + lines      github.com/matthewrichey3317/cfb-data (MIT; data from CollegeFootballData.com)
   College basketball results 2015-2026    Kaggle "March Machine Learning Mania" files, mirrored at
@@ -10,7 +11,7 @@
 
 Usage:  python scripts/fetch_data.py [nba nfl nhl ncaaf ncaab]   (default: all)
 Re-running skips files that are already present. Pass --refresh-current to re-download the
-current college football season (it is updated weekly upstream).
+current NFL and college football seasons (updated weekly upstream).
 """
 from __future__ import annotations
 
@@ -26,6 +27,13 @@ SBR = f"{GH}/flancast90/sportsbookreview-scraper/main/data"
 CFB = f"{GH}/matthewrichey3317/cfb-data/main"
 KAG = f"{GH}/lingmingzi/NCAA2026/main"
 NCAAM = f"{GH}/JDSB123/ncaam-historical-data/main"
+NFLV = "https://github.com/nflverse/nflverse-data/releases/download/stats_player"
+
+
+def _nfl_season() -> int:
+    """NFL seasons run into the next January/February."""
+    t = date.today()
+    return t.year if t.month >= 3 else t.year - 1
 
 
 def files(sport: str) -> dict[str, str]:
@@ -34,8 +42,14 @@ def files(sport: str) -> dict[str, str]:
                 **{f"regular_season_box_scores_2010_2024_part_{i}.csv":
                    f"{GH}/NocturneBear/NBA-Data-2010-2024/main/regular_season_box_scores_2010_2024_part_{i}.csv"
                    for i in (1, 2, 3)}}
-    if sport in ("nfl", "nhl"):
-        return {f"{sport}_archive_10Y.json": f"{SBR}/{sport}_archive_10Y.json"}
+    if sport == "nfl":
+        out = {"nfl_archive_10Y.json": f"{SBR}/nfl_archive_10Y.json",
+               "nfl_players/games.csv": f"{GH}/nflverse/nfldata/master/data/games.csv"}
+        for y in range(2016, _nfl_season() + 1):
+            out[f"nfl_players/stats_player_week_{y}.csv"] = f"{NFLV}/stats_player_week_{y}.csv"
+        return out
+    if sport == "nhl":
+        return {"nhl_archive_10Y.json": f"{SBR}/nhl_archive_10Y.json"}
     if sport == "ncaaf":
         with urllib.request.urlopen(f"{CFB}/export/index.json", timeout=60) as r:
             index = json.load(r)
@@ -59,7 +73,8 @@ def main(argv: list[str]) -> None:
     for sport in sports:
         for name, url in files(sport).items():
             dest = RAW / name
-            current = str(date.today().year) in name and sport == "ncaaf"
+            current = (sport == "ncaaf" and str(date.today().year) in name) or \
+                (sport == "nfl" and (str(_nfl_season()) in name or name.endswith("games.csv")))
             if dest.exists() and not (refresh and current):
                 print(f"have {name}")
                 continue

@@ -66,24 +66,40 @@ def game_odds(regions: str = "us", sport: str = "nba") -> pd.DataFrame:
     return parse_game_odds(data, sport)
 
 
-def parse_props(data: dict) -> pd.DataFrame:
+def prop_markets(sport: str = "nba") -> dict:
+    if sport == "nfl":
+        from ..nfl_props import ODDS_MARKETS
+        return ODDS_MARKETS
+    return PROP_MARKETS
+
+
+def parse_props(data: dict, sport: str = "nba") -> pd.DataFrame:
+    """One row per book/player/stat/side. Yes/No markets (anytime TD) become
+    over/under at a 0.5 line."""
+    markets = prop_markets(sport)
     rows = []
     for bk in data.get("bookmakers", []):
         for mk in bk.get("markets", []):
-            stat = PROP_MARKETS.get(mk["key"])
+            stat = markets.get(mk["key"])
             if not stat:
                 continue
             for o in mk.get("outcomes", []):
+                side = o["name"].lower()
+                side = {"yes": "over", "no": "under"}.get(side, side)
+                line = o.get("point")
+                if line is None and stat == "anytime_td":
+                    line = 0.5
                 rows.append(dict(event_id=data.get("id"), book=bk["key"], stat=stat,
-                                 player=o.get("description"), side=o["name"].lower(),
-                                 line=o.get("point"), price=o["price"]))
+                                 player=o.get("description"), side=side,
+                                 line=line, price=o["price"]))
     return pd.DataFrame(rows)
 
 
-def player_props(event_id: str, markets=tuple(PROP_MARKETS), regions: str = "us") -> pd.DataFrame:
-    data = _get(f"{BASE}/events/{event_id}/odds",
+def player_props(event_id: str, markets=None, regions: str = "us", sport: str = "nba") -> pd.DataFrame:
+    markets = markets or tuple(prop_markets(sport))
+    data = _get(f"{base(sport)}/events/{event_id}/odds",
                 {"regions": regions, "markets": ",".join(markets), "oddsFormat": "american"})
-    return parse_props(data)
+    return parse_props(data, sport)
 
 
 def my_books() -> list[str]:

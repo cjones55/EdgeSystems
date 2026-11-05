@@ -125,6 +125,93 @@ SIM_COLS = {"model_prob": st.column_config.NumberColumn("sim", format="%.1f%%"),
             "price": st.column_config.NumberColumn(format="%+d"),
             "units": st.column_config.NumberColumn(format="%du")}
 
+def render_game(k: str, res, g) -> None:
+    """Full drill-in for one game: team projections, distributions, box score."""
+    from edgesim import boxscore as BX
+    spc = SPORTS[k]
+    sim = BX.game_sim(g, res.ctx.ratings, k)
+    t = BX.team_summary(sim, g)
+    hn, an = g.home_name or g.home, g.away_name or g.away
+    st.markdown(f"#### {an} {t['away_pts']:.1f}  -  {t['home_pts']:.1f} {hn}")
+    m = st.columns(5)
+    m[0].metric(f"{hn} win", f"{t['home_win']:.1%}")
+    fair_ml = BX_fair(t["home_win"])
+    m[1].metric(f"Fair {hn} ML", f"{fair_ml:+.0f}",
+                f"market {g.home_ml:+.0f}" if g.home_ml else None, delta_color="off")
+    m[2].metric(f"Fair {spc.spread_label.lower()}", f"{t['fair_spread']:+.1f}",
+                f"market {g.spread:+g}" if g.spread is not None else None, delta_color="off")
+    m[3].metric("Fair total", f"{t['fair_total']:.1f}",
+                f"market {g.total:g}" if g.total is not None else None, delta_color="off")
+    m[4].metric("Overtime", f"{sim.went_ot.mean():.1%}")
+    if "home_cover" in t or "over" in t:
+        bits = []
+        if "home_cover" in t:
+            push_txt = f" (push {t['spread_push']:.1%})" if t.get("spread_push", 0) > 0.001 else ""
+            bits.append(f"**{hn} {g.spread:+g}** covers {t['home_cover']:.1%}"
+                        f"{push_txt}")
+        if "over" in t:
+            bits.append(f"**Over {g.total:g}** {t['over']:.1%}")
+        st.markdown(" · ".join(bits))
+    c1, c2, c3 = st.columns([2, 2, 1.4])
+    c1.caption(f"{hn} margin (positive = {hn} wins)")
+    c1.bar_chart(pd.Series(sim.margin).value_counts(normalize=True).sort_index() * 100, color="#2563eb",
+                 y_label="% of sims")
+    c2.caption("Total points")
+    c2.bar_chart(pd.Series(sim.total).value_counts(normalize=True).sort_index() * 100, color="#7c3aed",
+                 y_label="% of sims")
+    ls = BX.likely_scores(sim)
+    ls["chance"] = ls.chance * 100
+    c3.caption("Most likely final scores")
+    c3.dataframe(ls.rename(columns={"away": an, "home": hn}), hide_index=True,
+                 column_config={"chance": st.column_config.NumberColumn(format="%.1f%%")})
+    # candidates for this game
+    cands = res.candidates[(res.candidates.home == g.home) & (res.candidates.away == g.away)]
+    if not cands.empty:
+        with st.expander("Every market for this game"):
+            st.dataframe(pct_cols(cands[["pick", "price", "model_prob", "market_prob", "ev",
+                                         "units", "sharp_score", "sharp_reasons"]],
+                                  ["model_prob", "market_prob", "ev"]),
+                         hide_index=True, use_container_width=True, column_config=SIM_COLS)
+    # player box
+    feat = res.ctx.player_features
+    st.markdown("##### Projected box score")
+    if feat.empty:
+        st.caption("Player projections are NBA and NFL only. NBA needs **Price props** on in Live "
+                   "mode (it pulls recent box scores); NFL projections load automatically.")
+        return
+    cols = st.columns(2)
+    for col, team, name, pts in ((cols[0], g.away, an, t["away_pts"]), (cols[1], g.home, hn, t["home_pts"])):
+        col.markdown(f"**{name}** · {pts:.1f} projected")
+        if k == "nba":
+            box = BX.nba_box(feat, team, pts)
+            if box.empty:
+                col.caption("No projected players.")
+                continue
+            col.dataframe(box.round(1), hide_index=True, use_container_width=True,
+                          column_config={c: st.column_config.NumberColumn(format="%.1f")
+                                         for c in ["min", *BX.NBA_STATS]})
+        else:
+            tabs_ = BX.nfl_box(feat, team)
+            if not tabs_:
+                col.caption("No projected players.")
+            for title, df in tabs_.items():
+                col.caption(title)
+                cfg = {c: st.column_config.NumberColumn(format="%.1f") for c in df.columns
+                       if c not in ("player", "position", "td_chance")}
+                if "td_chance" in df:
+                    df = df.assign(td_chance=df.td_chance * 100)
+                    cfg["td_chance"] = st.column_config.NumberColumn("anytime TD", format="%.0f%%")
+                col.dataframe(df, hide_index=True, use_container_width=True, column_config=cfg)
+    st.caption("Player lines are each player's expected stats (averages, not a single simulated "
+               "game). NFL numbers are the props model: recent form adjusted for the game's "
+               "implied points.")
+
+
+def BX_fair(p: float) -> float:
+    p = min(max(p, 1e-3), 1 - 1e-3)
+    return -100 * p / (1 - p) if p >= 0.5 else 100 * (1 - p) / p
+
+
 # ------------------------------------------------------------------ sidebar
 with st.sidebar:
     st.markdown("## 🎯 EdgeSim")
@@ -136,7 +223,8 @@ with st.sidebar:
                                 format_func=lambda k: f"{ICON[k]} {SPORTS[k].label}")
         day = st.date_input("Date", date.today())
         an = st.toggle("Public betting % (Action Network)", True)
-        with_props = "nba" in sports and st.toggle("Price NBA props (uses Odds API credits)", False)
+        with_props = bool({"nba", "nfl"} & set(sports)) and st.toggle(
+            "Price NBA + NFL props (uses Odds API credits)", False)
     else:
         one = st.selectbox("Sport", list(SPORTS),
                            format_func=lambda k: f"{ICON[k]} {SPORTS[k].label}")
@@ -231,6 +319,16 @@ with tabs[0]:
                 for k, r in live_res.items():
                     n = tracker.log_plays(r.plays, r.ctx.day, sport=k)
                 st.success(f"Logged. The tracker now holds {n} plays.")
+        prop_frames = [r.props[r.props.play].assign(sport=k) for k, r in results.items()
+                       if not r.props.empty and "play" in r.props and r.props.play.any()]
+        if prop_frames:
+            pp = pd.concat(prop_frames, ignore_index=True).sort_values(["units", "ev"], ascending=False)
+            st.markdown(f"#### Prop plays ({len(pp)})")
+            st.dataframe(pct_cols(pp[["units", "sport", "pick", "price", "book", "projection",
+                                      "model_prob", "market_prob", "ev"]].head(40),
+                                  ["model_prob", "market_prob", "ev"]),
+                         hide_index=True, use_container_width=True,
+                         column_config=SIM_COLS | {"projection": st.column_config.NumberColumn(format="%.1f")})
         frames = [r.candidates.assign(sport=k) for k, r in results.items() if not r.candidates.empty]
         if frames:
             near = pd.concat(frames, ignore_index=True)
@@ -284,6 +382,20 @@ with tabs[1]:
                 help="Fair total minus market: positive means the sim likes the over"),
         })
 
+    # ---------------- drill-in
+    if results:
+        st.divider()
+        st.markdown("### 🔍 Game breakdown")
+        opts = [(k, i) for k, r in results.items() for i in range(len(r.ctx.games))]
+        def _lab(o):
+            k, i = o
+            g = results[k].ctx.games[i]
+            return (f"{ICON[k]} {g.away_name or g.away} {'vs' if g.neutral else '@'} "
+                    f"{g.home_name or g.home}")
+        if opts:
+            k, i = st.selectbox("Open a game", opts, format_func=_lab, key="drill")
+            render_game(k, results[k], results[k].ctx.games[i])
+
 # ------------------------------------------------------------------ simulator
 with tabs[2]:
     if not results:
@@ -326,35 +438,75 @@ with tabs[2]:
 
 # ------------------------------------------------------------------ props
 with tabs[3]:
-    nba = results.get("nba")
-    feat = nba.ctx.player_features if nba is not None else pd.DataFrame()
-    if nba is not None and not nba.props.empty and nba.props.play.any():
-        st.markdown("#### Prop plays")
-        pp = nba.props[nba.props.play].head(40)
-        st.dataframe(pct_cols(pp[["units", "player", "stat", "pick", "price", "book", "projection",
-                                  "model_prob", "market_prob", "ev"]],
-                              ["model_prob", "market_prob", "ev"]),
-                     hide_index=True, use_container_width=True,
-                     column_config=SIM_COLS | {"projection": st.column_config.NumberColumn(format="%.1f")})
-    if feat.empty:
-        st.info("Props are NBA only. Run an NBA demo date, or a live NBA slate with props on.")
+    prop_sports = [k for k in ("nba", "nfl") if k in results
+                   and not results[k].ctx.player_features.empty]
+    if not prop_sports:
+        st.info("Props cover the NBA and NFL. Turn on **Price props** in Live mode, or run an NBA "
+                "or NFL demo date.")
     else:
+        pk = st.radio("League", prop_sports, horizontal=True,
+                      format_func=lambda k: f"{ICON[k]} {SPORTS[k].label}", key="props_league")
+        res_p = results[pk]
+        feat = res_p.ctx.player_features
+        if not res_p.props.empty and res_p.props.play.any():
+            st.markdown("#### Prop plays")
+            pp = res_p.props[res_p.props.play].head(40)
+            st.dataframe(pct_cols(pp[["units", "pick", "price", "book", "projection",
+                                      "model_prob", "market_prob", "ev"]],
+                                  ["model_prob", "market_prob", "ev"]),
+                         hide_index=True, use_container_width=True,
+                         column_config=SIM_COLS | {"projection": st.column_config.NumberColumn(format="%.1f")})
+        elif res_p.ctx.prop_lines.empty:
+            st.caption("No prop lines loaded (they need ODDS_API_KEY). Projections below still work: "
+                       "type in your book's line.")
+        else:
+            st.caption("No prop cleared the bar.")
         st.markdown("#### Player explorer")
-        c1, c2, c3 = st.columns([3, 2, 2])
-        player = c1.selectbox("Player", sorted(feat.player.unique()))
-        x = feat[feat.player == player].iloc[-1]
-        stat = c2.selectbox("Stat", ["pts", "reb", "ast", "fg3m", *COMBOS])
-        rates = {s: x[f"rate_{s}"] for s in ["pts", "reb", "ast", "fg3m", "stl", "blk", "tov"]}
-        opp = {s: x[f"opp_{s}"] for s in rates}
-        sim = simulate_player(rates, x.proj_min, x.min_sd, n=20000, opp=opp, seed=1)
-        line = c3.number_input("Line", value=float(np.floor(sim[stat].mean()) + 0.5), step=0.5)
-        a, b, c = st.columns(3)
-        a.metric("Projection", f"{sim[stat].mean():.1f}")
-        b.metric(f"Over {line:g}", f"{(sim[stat] > line).mean():.1%}")
-        c.metric("Projected minutes", f"{x.proj_min:.1f} ± {x.min_sd:.1f}")
-        st.bar_chart(sim[stat].value_counts().sort_index(), color="#2563eb")
-        st.caption("Uncalibrated simulation view. The card's prop prices also apply the fitted "
-                   "calibration and blend with the market.")
+        if pk == "nba":
+            c1, c2, c3 = st.columns([3, 2, 2])
+            player = c1.selectbox("Player", sorted(feat.player.unique()))
+            x = feat[feat.player == player].iloc[-1]
+            stat = c2.selectbox("Stat", ["pts", "reb", "ast", "fg3m", *COMBOS])
+            rates = {s: x[f"rate_{s}"] for s in ["pts", "reb", "ast", "fg3m", "stl", "blk", "tov"]}
+            opp = {s: x[f"opp_{s}"] for s in rates}
+            sim = simulate_player(rates, x.proj_min, x.min_sd, n=20000, opp=opp, seed=1)
+            line = c3.number_input("Line", value=float(np.floor(sim[stat].mean()) + 0.5), step=0.5)
+            a, b, c = st.columns(3)
+            a.metric("Projection", f"{sim[stat].mean():.1f}")
+            b.metric(f"Over {line:g}", f"{(sim[stat] > line).mean():.1%}")
+            c.metric("Projected minutes", f"{x.proj_min:.1f} ± {x.min_sd:.1f}")
+            st.bar_chart(sim[stat].value_counts().sort_index(), color="#2563eb")
+            st.caption("Uncalibrated simulation view. The card's prop prices also apply the fitted "
+                       "calibration and blend with the market.")
+        else:
+            from edgesim import nfl_props as NP
+            params = NP.NFLPropParams.load()
+            elig = {k: NP.eligible(feat, k) for k in NP.STATS}
+            players = sorted(feat[np.logical_or.reduce(list(elig.values()))].player.unique())
+            c1, c2, c3 = st.columns([3, 2, 2])
+            player = c1.selectbox("Player", players)
+            x = feat[feat.player == player].iloc[-1]
+            mine = [k for k in NP.STATS if elig[k][feat.player == player].any()]
+            stat = c2.selectbox("Stat", mine, format_func=lambda k: NP.STATS[k].label)
+            mu = float(x[f"proj_{stat}"])
+            default = 0.5 if NP.STATS[stat].kind == "td" else float(np.floor(mu) + 0.5)
+            line = c3.number_input("Line", value=default, step=0.5 if mu < 30 else 1.0)
+            po, push = NP.prob_over(stat, mu, line, params)
+            a, b, c = st.columns(3)
+            a.metric("Projection", f"{mu:.2f}" if mu < 5 else f"{mu:.1f}")
+            b.metric("Anytime TD" if stat == "anytime_td" else f"Over {line:g}", f"{po:.1%}")
+            fair = (-100 * po / (1 - po)) if po >= 0.5 else 100 * (1 - po) / po
+            c.metric("Fair price", f"{fair:+.0f}")
+            st.caption(f"{x.position} · {x.team} vs {x.opponent_team} · "
+                       f"recent form {x[f'form_{stat}']:.1f}, adjusted for the opponent and the "
+                       "game's implied points.")
+            if NP.STATS[stat].kind != "td":
+                grid = np.arange(max(0.5, np.floor(mu * 0.4) + 0.5), np.floor(mu * 1.8) + 1, 
+                                 1.0 if mu < 30 else 5.0)
+                curve = pd.DataFrame({"line": grid, "P(over)": [
+                    NP.prob_over(stat, mu, g, params)[0] * 100 for g in grid]}).set_index("line")
+                st.caption("Chance of going over each line")
+                st.line_chart(curve, color="#2563eb")
 
 # ------------------------------------------------------------------ alerts
 with tabs[4]:

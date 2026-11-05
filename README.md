@@ -41,6 +41,27 @@ python -m edgesim grade               # next day: grade plays vs results + closi
 | Daily card | `edgesim/plays.py` | Blends the sim with the market's no-vig price, computes EV and a capped quarter-Kelly stake at the best available price, and tiers plays: **A** model + sharp agree, **B** model edge, **C** sharp lean. Plays the sharp side is against are dropped. |
 | Tracker | `edgesim/tracker.py` | Logs every live play and grades it on the result and on closing line value (CLV). |
 
+## NFL player props
+
+`edgesim/nfl_props.py` projects passing, rushing and receiving yards, attempts, completions,
+TDs, interceptions, receptions and anytime TD from nflverse weekly stats (2016 on): recent
+form (4-game half-life), adjusted for the game's implied points. Yards use the empirical spread
+of outcomes; counts use a negative binomial; anytime TD is Poisson. On 2021-2026 the projections
+beat a last-5-games average for every stat and the probabilities are well calibrated up to about
+70%, above which they run hot, so the card caps prop probabilities at 72%. Full results in
+[backtests/NFL_PROPS.md](backtests/NFL_PROPS.md). Real lines come from the Odds API (FanDuel and
+DraftKings by default); without a key the Props tab still shows every projection and the chance
+of going over any line you type in. Refresh the current season weekly with
+`python scripts/fetch_data.py nfl --refresh-current`.
+
+## Game breakdown
+
+The Games tab opens any game: projected score, fair moneyline/spread/total next to the market,
+cover and over chances, margin and total distributions, the most likely final scores, every
+market's numbers, and a projected box score (NBA players with minutes, points, rebounds,
+assists and more, adding up to the simulated team score; NFL passing, rushing and receiving with
+anytime TD chances).
+
 ## Unit sizes
 
 Every play lists a stake on a 1u / 2u / 3u / 5u (max) / 10u (super max) scale, with no 4u or
