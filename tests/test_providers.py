@@ -111,3 +111,14 @@ def test_espn_odds_off_and_placeholder_prices_are_missing():
     o = parse_odds({"spread": -34.5, "moneyline": {"home": {"close": {"odds": "OFF"}, "open": {"odds": "-100000"}},
                                                    "away": {"close": {"odds": "OFF"}, "open": {"odds": "+5000"}}}})
     assert o["espn_home_ml"] is None and o["espn_away_ml"] is None and o["espn_open_home_ml"] is None
+
+
+def test_espn_boxscore_skips_athletes_without_ids():
+    data = {"boxscore": {"players": [
+        {"team": {"abbreviation": "GS"}, "statistics": [{"labels": ["MIN", "PTS"], "athletes": [
+            {"athlete": {"displayName": "No Id"}, "stats": ["20", "10"]},
+            {"stats": ["12", "4"]},
+            {"athlete": {"id": "7", "displayName": "Has Id"}, "stats": ["30", "21"]}]}]},
+        {"statistics": []}]}}
+    rows = parse_boxscore(data, "401", pd.Timestamp("2026-11-04"))
+    assert [r["player"] for r in rows] == ["No Id", "Has Id"]

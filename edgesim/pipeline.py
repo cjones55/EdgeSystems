@@ -399,31 +399,43 @@ def live_context(day: date | None = None, with_props: bool = False,
             notes.append(f"Injury report unavailable ({e}).")
     elif sport == "nfl":
         # projections are free (box scores + props explorer); lines only when asked
-        _nfl_props(ctx, day, games, odds_api, espn, fetch_lines=with_props)
+        try:
+            _nfl_props(ctx, day, games, odds_api, espn, fetch_lines=with_props)
+        except Exception as e:
+            notes.append(f"NFL props skipped ({type(e).__name__}: {e}).")
     elif with_props:
         notes.append(f"Player props cover the NBA and NFL; skipped for {sp.label}.")
     if with_props and sp.has_props and slate:
-        pg = espn.player_games(pd.DataFrame([dict(event_id=e, date=dt) for e, dt in _event_ids(results, d, sport)]))
-        feat = project_players(pg, [(g.home, g.away) for g in games], d, load_prop_params())
-        if not ctx.injuries.empty:
-            out = ctx.injuries[ctx.injuries.status.str.lower().isin(["out", "doubtful"])]
-            out_names = set(out.player.map(norm_name))
-            feat = feat[~feat.player.map(norm_name).isin(out_names)]
-        ctx.player_features = feat
-        if odds_api.api_key():
-            lines = []
-            for gm in games:
-                ev = gm.books.get("event_id")
-                if ev:
-                    try:
-                        lines.append(odds_api.player_props(ev))
-                    except Exception as e:
-                        notes.append(f"Props failed for {gm.away}@{gm.home}: {e}")
-            if lines:
-                ctx.prop_lines = props_to_lines(pd.concat(lines), feat)
-        else:
-            notes.append("Props need ODDS_API_KEY for real lines.")
+        try:
+            _nba_props(ctx, day, d, results, games, odds_api, espn)
+        except Exception as e:  # props are optional: never lose the game card over them
+            notes.append(f"NBA props skipped ({type(e).__name__}: {e}).")
     return ctx
+
+
+def _nba_props(ctx: DayContext, day: date, d: pd.Timestamp, results: pd.DataFrame,
+               games: list, odds_api, espn) -> None:
+    sport, notes = "nba", ctx.notes
+    pg = espn.player_games(pd.DataFrame([dict(event_id=e, date=dt) for e, dt in _event_ids(results, d, sport)]))
+    feat = project_players(pg, [(g.home, g.away) for g in games], d, load_prop_params())
+    if not ctx.injuries.empty:
+        out = ctx.injuries[ctx.injuries.status.str.lower().isin(["out", "doubtful"])]
+        out_names = set(out.player.map(norm_name))
+        feat = feat[~feat.player.map(norm_name).isin(out_names)]
+    ctx.player_features = feat
+    if odds_api.api_key():
+        lines = []
+        for gm in games:
+            ev = gm.books.get("event_id")
+            if ev:
+                try:
+                    lines.append(odds_api.player_props(ev))
+                except Exception as e:
+                    notes.append(f"Props failed for {gm.away}@{gm.home}: {e}")
+        if lines:
+            ctx.prop_lines = props_to_lines(pd.concat(lines), feat)
+    else:
+        notes.append("Props need ODDS_API_KEY for real lines.")
 
 
 def _nfl_props(ctx: DayContext, day: date, games: list, odds_api, espn,

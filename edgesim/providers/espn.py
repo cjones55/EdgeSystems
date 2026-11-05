@@ -184,7 +184,7 @@ _LABELS = {"MIN": "min", "PTS": "pts", "REB": "reb", "AST": "ast", "STL": "stl",
 def parse_boxscore(data: dict, event_id: str, day: pd.Timestamp) -> list[dict]:
     rows = []
     box = data.get("boxscore", {})
-    teams = [to_code(t["team"].get("abbreviation")) for t in box.get("players", [])]
+    teams = [to_code((t.get("team") or {}).get("abbreviation", "")) for t in box.get("players", [])]
     for i, team_block in enumerate(box.get("players", [])):
         team = teams[i]
         opp = teams[1 - i] if len(teams) == 2 else None
@@ -192,11 +192,12 @@ def parse_boxscore(data: dict, event_id: str, day: pd.Timestamp) -> list[dict]:
             labels = stat_block.get("labels") or []
             for ath in stat_block.get("athletes", []):
                 vals = ath.get("stats") or []
-                if ath.get("didNotPlay") or len(vals) != len(labels):
+                person = ath.get("athlete") or {}
+                pid = person.get("id") or person.get("uid") or person.get("displayName")
+                if ath.get("didNotPlay") or len(vals) != len(labels) or not pid:
                     continue
                 rec = dict(date=day, game_id=str(event_id), team=team, opp=opp,
-                           player_id=str(ath["athlete"]["id"]),
-                           player=ath["athlete"].get("displayName"))
+                           player_id=str(pid), player=person.get("displayName"))
                 for lab, v in zip(labels, vals):
                     if lab in _LABELS:
                         rec[_LABELS[lab]] = _num(v)

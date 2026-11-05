@@ -104,8 +104,48 @@ def _fix(t):
     return TEAM_FIX.get(t, t)
 
 
+NFLV = "https://github.com/nflverse/nflverse-data/releases/download/stats_player"
+SCHEDULE = "https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv"
+
+
+def _season_now() -> int:
+    from datetime import date
+    t = date.today()
+    return t.year if t.month >= 3 else t.year - 1
+
+
+def ensure_data(raw: Path = RAW, max_age_hours: float = 24) -> list[str]:
+    """Download missing NFL player files, and refresh the current season and the
+    schedule when they are older than ``max_age_hours``. Failures are ignored
+    (the caller reports missing data). Returns the files it fetched."""
+    import time
+    import urllib.request
+    raw.mkdir(parents=True, exist_ok=True)
+    want = {f"stats_player_week_{y}.csv": f"{NFLV}/stats_player_week_{y}.csv"
+            for y in range(2016, _season_now() + 1)}
+    want["games.csv"] = SCHEDULE
+    fresh = {f"stats_player_week_{_season_now()}.csv", "games.csv"}
+    got = []
+    for name, url in want.items():
+        dest = raw / name
+        stale = dest.exists() and name in fresh and \
+            (time.time() - dest.stat().st_mtime) / 3600 > max_age_hours
+        if dest.exists() and not stale:
+            continue
+        try:
+            tmp = dest.with_suffix(".part")
+            urllib.request.urlretrieve(url, tmp)
+            tmp.replace(dest)
+            got.append(name)
+        except Exception:
+            pass
+    return got
+
+
 def load_player_games(raw: Path = RAW) -> pd.DataFrame:
     """One row per player-game, with game date, opponent and the team's implied points."""
+    if raw == RAW:
+        ensure_data(raw)
     files = sorted(raw.glob("stats_player_week_*.csv"))
     if not files:
         raise FileNotFoundError("NFL player stats missing: run scripts/fetch_data.py nfl")
