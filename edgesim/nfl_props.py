@@ -152,7 +152,8 @@ def load_player_games(raw: Path = RAW) -> pd.DataFrame:
     cols = ["player_id", "player_display_name", "position", "position_group", "season", "week",
             "season_type", "game_id", "team", "opponent_team", "completions", "attempts",
             "passing_yards", "passing_tds", "passing_interceptions", "carries", "rushing_yards",
-            "rushing_tds", "receptions", "targets", "receiving_yards", "receiving_tds"]
+            "rushing_tds", "receptions", "targets", "receiving_yards", "receiving_tds",
+            "passing_epa", "rushing_epa"]
     df = pd.concat([pd.read_csv(f, usecols=lambda c: c in cols, low_memory=False) for f in files],
                    ignore_index=True)
     df = df[df.season_type.isin(["REG", "POST"])]

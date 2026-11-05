@@ -451,10 +451,29 @@ def _nfl_props(ctx: DayContext, day: date, games: list, odds_api, espn,
     out_names = set()
     try:
         inj = espn.injuries("nfl")
-        bad = inj[inj.status.str.lower().str.contains("out|doubtful|injured reserve|ir", regex=True)]
+        bad = inj[inj.status.fillna("").str.lower().str.contains(
+            r"\bout\b|doubtful|injured reserve|\bir\b|suspen|physically unable", regex=True)]
         out_names = set(bad.player.str.lower())
+        ctx.injuries = inj
     except Exception as e:
         notes.append(f"NFL injury report unavailable ({e}); injured players may be projected.")
+    # starting QB: adjust each team's expected points for who is expected to start
+    try:
+        from . import nfl_qb as Q
+        st = Q.starters(pg)
+        vals = Q.QBValues(st, Q.replacement_level(st))
+        for g in games:
+            parts = []
+            for team, attr in ((g.home, "home_adj"), (g.away, "away_adj")):
+                qs = Q.team_qb_status(pg, team, pd.Timestamp(day), out_names, st, vals)
+                if qs and abs(qs.adjustment) >= 0.5:
+                    setattr(g, attr, qs.adjustment)
+                    parts.append(qs.note())
+            if parts:
+                g.adj_note = "; ".join(parts)
+                notes.append(g.adj_note)
+    except Exception as e:
+        notes.append(f"QB adjustment skipped ({type(e).__name__}: {e}).")
     feat = N.project_upcoming(pg, [(g.home, g.away, g.spread, g.total) for g in games],
                               pd.Timestamp(day), out_players=out_names)
     ctx.player_features = feat

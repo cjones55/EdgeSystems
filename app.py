@@ -133,6 +133,8 @@ def render_game(k: str, res, g) -> None:
     t = BX.team_summary(sim, g)
     hn, an = g.home_name or g.home, g.away_name or g.away
     st.markdown(f"#### {an} {t['away_pts']:.1f}  -  {t['home_pts']:.1f} {hn}")
+    if getattr(g, "adj_note", ""):
+        st.warning(f"🩹 {g.adj_note}")
     m = st.columns(5)
     m[0].metric(f"{hn} win", f"{t['home_win']:.1%}")
     fair_ml = BX_fair(t["home_win"])

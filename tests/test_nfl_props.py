@@ -95,3 +95,30 @@ def test_box_scores():
                     went_ot=np.zeros(4, bool))
     ls = BX.likely_scores(sim)
     assert (ls.iloc[0].away, ls.iloc[0].home, ls.iloc[0].chance) == (17, 24, 0.5)
+
+
+def test_qb_out_lowers_team_projection():
+    from edgesim import nfl_qb as Q
+    from edgesim.plays import GameMarket, PlayConfig, evaluate_game
+    from edgesim.ratings import TeamRatings
+    from edgesim.sports import get
+    pg = _games(10)
+    pg["attempts"] = np.where(pg.position == "QB", 34, 0)
+    pg["passing_epa"] = np.where(pg.player_id == "AAAqb", 12.0, np.where(pg.position == "QB", 0.0, np.nan))
+    pg["rushing_epa"] = 0.0
+    # a backup who threw a few passes last season
+    extra = pg[pg.player_id == "AAAqb"].head(1).assign(
+        player_id="AAAbk", player="AAA Backup", attempts=5, passing_epa=-6.0,
+        date=pg.date.min() - pd.Timedelta(days=200), game_id="2024_18_AAA_BBB")
+    pg = pd.concat([extra, pg], ignore_index=True)
+    day = pg.date.max() + pd.Timedelta(days=7)
+    healthy = Q.team_qb_status(pg, "AAA", day, set())
+    hurt = Q.team_qb_status(pg, "AAA", day, {"aaa quarterback"})
+    assert abs(healthy.adjustment) < 0.5
+    assert hurt.starter == "AAA Backup" and hurt.adjustment < -3 and hurt.out == ["AAA Quarterback"]
+    r = TeamRatings(get("nfl").rating)
+    g0 = GameMarket(home="AAA", away="BBB", spread=-3, total=45)
+    g1 = GameMarket(home="AAA", away="BBB", spread=-3, total=45, home_adj=hurt.adjustment)
+    s0, _ = evaluate_game(g0, r, cfg=PlayConfig.for_sport("nfl", n_sims=4000))
+    s1, _ = evaluate_game(g1, r, cfg=PlayConfig.for_sport("nfl", n_sims=4000))
+    assert s1["home_win"] < s0["home_win"] - 0.05

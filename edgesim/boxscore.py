@@ -18,6 +18,7 @@ def game_sim(g, ratings, sport: str, n_sims: int = 20000, seed: int = 7):
     """Re-run the card's simulation for one GameMarket and keep the raw draws."""
     from .sports import get
     eh, ea = ratings.expected(g.home, g.away, g.home_rest, g.away_rest, g.neutral)
+    eh, ea = max(eh + g.home_adj, 1.0), max(ea + g.away_adj, 1.0)
     return get(sport).sim(eh, ea, n_sims=n_sims, seed=seed)
 
 

@@ -54,6 +54,15 @@ DraftKings by default); without a key the Props tab still shows every projection
 of going over any line you type in. Refresh the current season weekly with
 `python scripts/fetch_data.py nfl --refresh-current`.
 
+## Injuries and quarterbacks
+
+Live NFL cards read ESPN's injury report. Players listed out, doubtful or on IR are dropped from
+prop projections, and each team's expected points are adjusted for its expected starting QB:
+the gap between his value (EPA per game, shrunk toward a typical backup) and the QB play already
+baked into the team's rating. In 2019-2021 tests this cut the sim's margin error by 1% overall
+and 4% in games with a big QB gap ([backtests/NFL_QB.md](backtests/NFL_QB.md)). The market
+prices injury news fast, so the card still leans on the line.
+
 ## Game breakdown
 
 The Games tab opens any game: projected score, fair moneyline/spread/total next to the market,
