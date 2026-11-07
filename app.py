@@ -167,7 +167,11 @@ def render_game(k: str, res, g) -> None:
     c3.dataframe(ls.rename(columns={"away": an, "home": hn}), hide_index=True,
                  column_config={"chance": st.column_config.NumberColumn(format="%.1f%%")})
     # candidates for this game
-    cands = res.candidates[(res.candidates.home == g.home) & (res.candidates.away == g.away)]
+    cands = res.candidates
+    if not cands.empty and {"home", "away"} <= set(cands.columns):
+        cands = cands[(cands.home == g.home) & (cands.away == g.away)]
+    else:
+        cands = pd.DataFrame()
     if not cands.empty:
         with st.expander("Every market for this game"):
             st.dataframe(pct_cols(cands[["pick", "price", "model_prob", "market_prob", "ev",
