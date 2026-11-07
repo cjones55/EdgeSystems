@@ -90,10 +90,12 @@ def run_day(ctx: DayContext, cfg: PlayConfig | None = None,
 
 # ---------------------------------------------------------------------------
 def fit_ratings(results: pd.DataFrame, until: pd.Timestamp, sport: str = "nba") -> TeamRatings:
-    from .sports import get
-    r = TeamRatings(get(sport).rating)
+    from .sports import get, rating_points
+    sp = get(sport)
+    r = TeamRatings(sp.rating)
     for g in results[results.date < until].itertuples():
-        r.update(g.home, g.away, g.home_pts, g.away_pts, getattr(g, "home_rest", 2),
+        hp, ap = rating_points(g, sp.market_weight)
+        r.update(g.home, g.away, hp, ap, getattr(g, "home_rest", 2),
                  getattr(g, "away_rest", 2), season=g.season,
                  neutral=bool(getattr(g, "neutral", False)))
     return r
@@ -251,14 +253,19 @@ def live_results(day: date, sport: str = "nba", history_seasons: int = 2) -> pd.
         try:
             hist = load_history(sport)
             hist = hist[hist.date < pd.Timestamp(day)]
-            frames.append(hist[["date", "season", "home", "away", "home_pts", "away_pts", "neutral"]])
+            frames.append(hist[["date", "season", "home", "away", "home_pts", "away_pts", "neutral",
+                                "close_spread", "close_total"]])
             start = max(start, (hist.date.max() + pd.Timedelta(days=1)).date())
         except FileNotFoundError:
             pass
     if start <= day - timedelta(days=1):
         espn_res = espn.results(start, day - timedelta(days=1), sport=sport)
         if not espn_res.empty:
-            frames.append(espn_res[["date", "season", "home", "away", "home_pts", "away_pts", "neutral"]])
+            # ESPN keeps the closing consensus line on finished games
+            espn_res = espn_res.assign(close_spread=espn_res.get("espn_spread"),
+                                       close_total=espn_res.get("espn_total"))
+            frames.append(espn_res[["date", "season", "home", "away", "home_pts", "away_pts", "neutral",
+                                    "close_spread", "close_total"]])
     if not frames:
         raise RuntimeError(f"Could not load any {sport.upper()} results")
     res = pd.concat(frames, ignore_index=True).dropna(subset=["home", "away"])

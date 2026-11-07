@@ -122,3 +122,14 @@ def test_espn_boxscore_skips_athletes_without_ids():
         {"statistics": []}]}}
     rows = parse_boxscore(data, "401", pd.Timestamp("2026-11-04"))
     assert [r["player"] for r in rows] == ["No Id", "Has Id"]
+
+
+def test_rating_points_blends_closing_line():
+    from types import SimpleNamespace
+    from edgesim.sports import rating_points
+    g = SimpleNamespace(home_pts=35, away_pts=7, close_spread=-7.0, close_total=50.0)
+    assert rating_points(g, 0.0) == (35, 7)
+    hp, ap = rating_points(g, 1.0)
+    assert (hp, ap) == (28.5, 21.5)
+    g.close_total = float("nan")
+    assert rating_points(g, 0.7) == (35, 7)      # no line: score only

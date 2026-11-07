@@ -7,7 +7,7 @@ Generated 2026-11-04 17:44. Full results per sport are in [backtests/](backtests
 | NBA | 7076 | 0.624 | 0.603 | 2.4% | -4.6% | 46% vs 39% | 58% vs 50% |
 | NFL | 1404 | 0.633 | 0.608 | 2.2% | -4.7% | 52% vs 32% | 59% vs 50% |
 | NHL | 6303 | 0.671 | 0.665 | 4.2% | -4.5% | 52% vs 45% | ROI +9% vs -1% |
-| College football | 4270 | 0.569 | 0.548 | 4.6% | -6.1% | 46% vs 42% | 58% vs 52% |
+| College football | 4275 | 0.555 | 0.548 | 3.3% | -5.3% | 49% vs 40% | 58% vs 52% |
 | College basketball | 9370 | 0.553 | 0.542 | 1.9% | -4.1% | n/a (no opening lines) | n/a (no opening lines) |
 
 ## What this means

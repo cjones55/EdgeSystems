@@ -35,6 +35,9 @@ class Sport:
     espn_params: dict = field(default_factory=dict)
     sharp: SharpConfig = field(default_factory=SharpConfig)
     archive_note: str = ""
+    # ratings learn from a blend of the final score and the closing line's implied
+    # score: 0 = scores only, 1 = closing lines only (games without lines use scores)
+    market_weight: float = 0.0
 
     def sim(self, exp_home: float, exp_away: float, **overrides):
         return self.simulate(exp_home, exp_away, self.sim_config(**overrides))
@@ -72,9 +75,9 @@ SPORTS: dict[str, Sport] = {
         archive_note="2011-12 to 2021-22, open + close moneylines, closing puck line and total with prices"),
     "ncaaf": Sport(
         "ncaaf", "College football", "football/college-football", "americanfootball_ncaaf", 8,
-        RatingParams(k=0.15, k_early=0.15, early_games=4, season_regress=0.85, league_avg=55,
+        RatingParams(k=0.3, k_early=0.3, early_games=4, season_regress=0.95, league_avg=55,
                      hca=3.0, b2b=0, rest_bonus=0, recentre=False, new_team_off=-8,
-                     new_team_def=-8, err_cap=24),
+                     new_team_def=-8, err_cap=18),
         gamesim_nfl.simulate_game,
         _cfg(gamesim_nfl.NFLSimConfig, drives_mean=12.5, rating_sd=7.0, rating_total_sd=8.0,
              ot_tie_prob=0.0, ot_fg_share=0.35),
@@ -82,7 +85,8 @@ SPORTS: dict[str, Sport] = {
         espn_params={"groups": "80", "limit": "300"},
         sharp=SharpConfig(rlm_min_move={"spread": 1.0, "total": 1.0, "ml": 0.02},
                           steam_move={"spread": 2.5, "total": 2.5, "ml": 0.05}),
-        archive_note="2015 to 2026 FBS games, closing lines (opening lines and moneylines for about half)"),
+        archive_note="2015 to 2026 FBS games, closing lines (opening lines and moneylines for about half)",
+        market_weight=0.7),
     "ncaab": Sport(
         "ncaab", "College basketball", "basketball/mens-college-basketball", "basketball_ncaab", 11,
         RatingParams(k=0.08, k_early=0.12, early_games=8, season_regress=0.6, league_avg=140,
@@ -103,6 +107,17 @@ def get(key: str) -> Sport:
         return SPORTS[key.lower()]
     except KeyError:
         raise ValueError(f"Unknown sport {key!r}; choose from {', '.join(SPORTS)}") from None
+
+
+def rating_points(g, w: float) -> tuple[float, float]:
+    """Scores to update ratings with: the final score blended with the closing
+    line's implied score (weight ``w``) when the game has a closing spread and total."""
+    hp, ap = g.home_pts, g.away_pts
+    cs, ct = getattr(g, "close_spread", None), getattr(g, "close_total", None)
+    if w > 0 and cs is not None and ct is not None and cs == cs and ct == ct:
+        mh, ma = ct / 2 - cs / 2, ct / 2 + cs / 2
+        hp, ap = (1 - w) * hp + w * mh, (1 - w) * ap + w * ma
+    return hp, ap
 
 
 def load_history(key: str):

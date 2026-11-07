@@ -50,8 +50,8 @@ def walk_forward(games: pd.DataFrame, sport: str = "nba", params=None, sim=None,
                 if not np.isnan(t):
                     row[f"p_over_{when}"], row[f"p_opush_{when}"] = res.p_over(t)
             out.append(row)
-        r.update(g.home, g.away, g.home_pts, g.away_pts, g.home_rest, g.away_rest,
-                 season=g.season, neutral=neutral)
+        hp, ap = sports.rating_points(g, sp.market_weight)
+        r.update(g.home, g.away, hp, ap, g.home_rest, g.away_rest, season=g.season, neutral=neutral)
     pred = pd.DataFrame(out).set_index("idx")
     return games.join(pred, how="inner")
 
