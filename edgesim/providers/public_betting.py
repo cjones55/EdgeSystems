@@ -53,8 +53,10 @@ def to_splits(df: pd.DataFrame) -> dict[tuple[str, str, str], MarketSplit]:
     for r in df.itertuples():
         def f(v):
             return None if pd.isna(v) else float(v)
-        out[(r.home, r.away, r.market)] = MarketSplit(
-            r.market, f(r.open_line), f(r.current_line), f(r.tickets_pct_a), f(r.money_pct_a))
+        t, m = f(r.tickets_pct_a), f(r.money_pct_a)
+        if not t and not m:      # 0% / 0% is how Action Network shows "no data yet"
+            t = m = None
+        out[(r.home, r.away, r.market)] = MarketSplit(r.market, f(r.open_line), f(r.current_line), t, m)
     return out
 
 

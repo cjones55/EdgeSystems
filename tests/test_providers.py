@@ -133,3 +133,15 @@ def test_rating_points_blends_closing_line():
     assert (hp, ap) == (28.5, 21.5)
     g.close_total = float("nan")
     assert rating_points(g, 0.7) == (35, 7)      # no line: score only
+
+
+def test_zero_zero_splits_mean_no_data():
+    import pandas as pd
+    from edgesim.providers.public_betting import COLUMNS, to_splits
+    df = pd.DataFrame([dict(home="A", away="B", market="spread", open_line=None, current_line=-3,
+                            tickets_pct_a=0.0, money_pct_a=0.0),
+                       dict(home="C", away="D", market="spread", open_line=None, current_line=-3,
+                            tickets_pct_a=0.0, money_pct_a=12.0)], columns=COLUMNS)
+    s = to_splits(df)
+    assert s[("A", "B", "spread")].tickets_a is None and s[("A", "B", "spread")].money_a is None
+    assert s[("C", "D", "spread")].tickets_a == 0.0
