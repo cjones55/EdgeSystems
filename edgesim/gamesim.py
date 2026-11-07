@@ -41,6 +41,8 @@ class SimConfig:
     rating_sd: float = 2.3       # our model's own error on the margin vs the market
     rating_total_sd: float = 4.0  # model error on the total
     pace_sd: float = 4.0         # possessions
+    minutes: float = 48.0        # regulation length (40 for college)
+    ppp: float = LEAGUE_PPP
     seed: int | None = None
 
 
@@ -111,7 +113,7 @@ def simulate_game(exp_home: float, exp_away: float, cfg: SimConfig | None = None
     true_away = (true_total - true_margin) / 2
 
     # 2-3. possessions
-    poss_mean = exp_total / 2 / LEAGUE_PPP
+    poss_mean = exp_total / 2 / cfg.ppp
     poss = np.maximum(60, np.round(rng.normal(poss_mean, cfg.pace_sd, n))).astype(np.int64)
     h_raw = _play(rng, poss, true_home / poss_mean)
     a_raw = _play(rng, poss, true_away / poss_mean)
@@ -128,7 +130,7 @@ def simulate_game(exp_home: float, exp_away: float, cfg: SimConfig | None = None
 
     # 5. overtime
     went_ot = np.zeros(n, dtype=bool)
-    ot_poss = max(8, int(round(poss_mean * 5 / 48)))
+    ot_poss = max(6, int(round(poss_mean * 5 / cfg.minutes)))
     tied = np.nonzero(home == away)[0]
     while len(tied):
         went_ot[tied] = True

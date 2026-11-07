@@ -14,9 +14,22 @@ from pathlib import Path
 import pandas as pd
 import requests
 
+from ..resolve import resolve
 from ..teams import to_code
 
-BASE = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba"
+ROOT_URL = "https://site.api.espn.com/apis/site/v2/sports"
+BASE = f"{ROOT_URL}/basketball/nba"
+
+
+def base(sport: str = "nba") -> str:
+    from ..sports import get
+    return f"{ROOT_URL}/{get(sport).espn_path}"
+
+
+def _team_key(team: dict, sport: str) -> str | None:
+    if sport in ("ncaaf", "ncaab"):
+        return resolve(team.get("location") or team.get("displayName", ""), sport, team.get("id"))
+    return to_code(team.get("abbreviation", ""), sport) or to_code(team.get("displayName", ""), sport)
 CACHE = Path(__file__).resolve().parents[2] / "data" / "cache" / "espn"
 HEADERS = {"User-Agent": "edgesim/1.0"}
 
@@ -45,7 +58,7 @@ def _get(url: str, params: dict | None = None, cache_key: str | None = None,
 
 
 # ---------------------------------------------------------------------------
-def parse_scoreboard(data: dict) -> list[dict]:
+def parse_scoreboard(data: dict, sport: str = "nba") -> list[dict]:
     games = []
     for ev in data.get("events", []):
         comp = ev["competitions"][0]
@@ -55,36 +68,103 @@ def parse_scoreboard(data: dict) -> list[dict]:
             continue
         status = comp.get("status", ev.get("status", {})).get("type", {})
         g = dict(event_id=ev["id"], start=ev.get("date"),
-                 home=to_code(h["team"].get("abbreviation")) or to_code(h["team"].get("displayName")),
-                 away=to_code(a["team"].get("abbreviation")) or to_code(a["team"].get("displayName")),
+                 home=_team_key(h["team"], sport), away=_team_key(a["team"], sport),
+                 home_name=h["team"].get("displayName"), away_name=a["team"].get("displayName"),
+                 neutral=bool(comp.get("neutralSite", False)),
                  completed=bool(status.get("completed")),
                  home_pts=int(h["score"]) if status.get("completed") else None,
                  away_pts=int(a["score"]) if status.get("completed") else None,
                  season_type=ev.get("season", {}).get("type"))
-        odds = (comp.get("odds") or [{}])[0]
-        g["espn_spread"] = odds.get("spread")          # home spread
-        g["espn_total"] = odds.get("overUnder")
+        g.update(parse_odds((comp.get("odds") or [{}])[0]))
         games.append(g)
     return games
 
 
-def scoreboard(day: date, live: bool = False) -> list[dict]:
-    key = None if live else f"scoreboard_{day:%Y%m%d}"
+def _american(v) -> float | None:
+    """ESPN prices come as numbers or strings like "-180", "+150", "EVEN"."""
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v) if v != 0 else None
+    t = str(v).strip().upper()
+    if t in ("EVEN", "EV", "PK"):
+        return 100.0
+    try:
+        x = float(t.replace("+", ""))
+        # ESPN posts placeholders like -100000 on huge mismatches: treat as no line
+        return x if 100 <= abs(x) <= 5000 else None
+    except ValueError:
+        return None
+
+
+def _line(v) -> float | None:
+    """Lines like "-3.5", "o49.5", "u49.5", "PK"."""
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    t = str(v).strip().lower().lstrip("ou")
+    if t in ("pk", "even"):
+        return 0.0
+    try:
+        return float(t)
+    except ValueError:
+        return None
+
+
+def _dig(d, *path):
+    for k in path:
+        if not isinstance(d, dict):
+            return None
+        d = d.get(k)
+    return d
+
+
+def parse_odds(odds: dict) -> dict:
+    """ESPN's consensus odds for one game: spread, total, moneyline, their prices,
+    and opening numbers when ESPN lists them. Missing pieces come back as None."""
+    h, a = odds.get("homeTeamOdds") or {}, odds.get("awayTeamOdds") or {}
+    out = dict(
+        espn_spread=_line(odds.get("spread")),
+        espn_total=_line(odds.get("overUnder")),
+        espn_home_ml=_american(h.get("moneyLine")) or _american(_dig(odds, "moneyline", "home", "close", "odds")),
+        espn_away_ml=_american(a.get("moneyLine")) or _american(_dig(odds, "moneyline", "away", "close", "odds")),
+        espn_spread_home_price=_american(h.get("spreadOdds")) or _american(_dig(odds, "pointSpread", "home", "close", "odds")),
+        espn_spread_away_price=_american(a.get("spreadOdds")) or _american(_dig(odds, "pointSpread", "away", "close", "odds")),
+        espn_over_price=_american(odds.get("overOdds")) or _american(_dig(odds, "total", "over", "close", "odds")),
+        espn_under_price=_american(odds.get("underOdds")) or _american(_dig(odds, "total", "under", "close", "odds")),
+        espn_open_spread=_line(_dig(odds, "pointSpread", "home", "open", "line")),
+        espn_open_total=_line(_dig(odds, "total", "over", "open", "line")),
+        espn_open_home_ml=_american(_dig(odds, "moneyline", "home", "open", "odds")),
+    )
+    if out["espn_spread"] is None:
+        out["espn_spread"] = _line(_dig(odds, "pointSpread", "home", "close", "line"))
+    if out["espn_total"] is None:
+        out["espn_total"] = _line(_dig(odds, "total", "over", "close", "line"))
+    return out
+
+
+def scoreboard(day: date, live: bool = False, sport: str = "nba") -> list[dict]:
+    from ..sports import get
+    key = None if live else f"{sport}_scoreboard_{day:%Y%m%d}"
     ttl = None if day < date.today() - timedelta(days=1) else 1.0
-    data = _get(f"{BASE}/scoreboard", {"dates": f"{day:%Y%m%d}"}, cache_key=key, ttl_hours=ttl)
-    return parse_scoreboard(data)
+    params = {"dates": f"{day:%Y%m%d}", **get(sport).espn_params}
+    data = _get(f"{base(sport)}/scoreboard", params, cache_key=key, ttl_hours=ttl)
+    return parse_scoreboard(data, sport)
 
 
-def season_start(day: date) -> date:
-    """NBA regular seasons start in October."""
-    y = day.year if day.month >= 9 else day.year - 1
-    return date(y, 10, 1)
+def season_start(day: date, sport: str = "nba") -> date:
+    """First day of the season containing ``day``. Every supported league starts
+    between August and November, so July is the cut-over."""
+    from ..sports import get
+    y = day.year if day.month >= 7 else day.year - 1
+    return date(y, get(sport).season_month, 1)
 
 
-def results(start: date, end: date, workers: int = 8) -> pd.DataFrame:
+def results(start: date, end: date, workers: int = 8, sport: str = "nba") -> pd.DataFrame:
     days = [start + timedelta(d) for d in range((end - start).days + 1)]
     with ThreadPoolExecutor(workers) as ex:
-        chunks = list(ex.map(scoreboard, days))
+        chunks = list(ex.map(lambda d: scoreboard(d, sport=sport), days))
     rows = [dict(g, date=pd.Timestamp(d)) for d, gs in zip(days, chunks) for g in gs]
     df = pd.DataFrame(rows)
     if df.empty:
@@ -92,7 +172,7 @@ def results(start: date, end: date, workers: int = 8) -> pd.DataFrame:
     df = df[df.completed & df.home.notna() & df.away.notna()]
     # skip preseason (type 1) and all-star games
     df = df[df.season_type.fillna(2).isin([2, 3, 5])]
-    df["season"] = df.date.map(lambda d: season_start(d.date()).year)
+    df["season"] = df.date.map(lambda d: season_label(d.date(), sport))
     return df.sort_values("date").reset_index(drop=True)
 
 
@@ -104,7 +184,7 @@ _LABELS = {"MIN": "min", "PTS": "pts", "REB": "reb", "AST": "ast", "STL": "stl",
 def parse_boxscore(data: dict, event_id: str, day: pd.Timestamp) -> list[dict]:
     rows = []
     box = data.get("boxscore", {})
-    teams = [to_code(t["team"].get("abbreviation")) for t in box.get("players", [])]
+    teams = [to_code((t.get("team") or {}).get("abbreviation", "")) for t in box.get("players", [])]
     for i, team_block in enumerate(box.get("players", [])):
         team = teams[i]
         opp = teams[1 - i] if len(teams) == 2 else None
@@ -112,11 +192,12 @@ def parse_boxscore(data: dict, event_id: str, day: pd.Timestamp) -> list[dict]:
             labels = stat_block.get("labels") or []
             for ath in stat_block.get("athletes", []):
                 vals = ath.get("stats") or []
-                if ath.get("didNotPlay") or len(vals) != len(labels):
+                person = ath.get("athlete") or {}
+                pid = person.get("id") or person.get("uid") or person.get("displayName")
+                if ath.get("didNotPlay") or len(vals) != len(labels) or not pid:
                     continue
                 rec = dict(date=day, game_id=str(event_id), team=team, opp=opp,
-                           player_id=str(ath["athlete"]["id"]),
-                           player=ath["athlete"].get("displayName"))
+                           player_id=str(pid), player=person.get("displayName"))
                 for lab, v in zip(labels, vals):
                     if lab in _LABELS:
                         rec[_LABELS[lab]] = _num(v)
@@ -132,6 +213,13 @@ def _num(v) -> float:
         return float(str(v).split(":")[0]) if v not in ("", "--", None) else 0.0
     except ValueError:
         return 0.0
+
+
+def season_label(day: date, sport: str = "nba") -> int:
+    """Season id matching the historical data: the start year, except college
+    basketball, which (like the Kaggle data) is named for the year it ends."""
+    y = season_start(day, sport).year
+    return y + 1 if sport == "ncaab" else y
 
 
 def boxscore(event_id: str, day: pd.Timestamp) -> list[dict]:
@@ -158,5 +246,8 @@ def parse_injuries(data: dict) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["team", "player", "status", "detail"])
 
 
-def injuries() -> pd.DataFrame:
-    return parse_injuries(_get(f"{BASE}/injuries"))
+def injuries(sport: str = "nba") -> pd.DataFrame:
+    df = parse_injuries(_get(f"{base(sport)}/injuries"))
+    if sport != "nba":
+        df["team"] = None   # parse_injuries maps NBA names; other sports match by player
+    return df
