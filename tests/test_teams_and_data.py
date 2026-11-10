@@ -49,3 +49,26 @@ def test_archive_loads_clean():
     assert df.close_total.between(150, 290).all()
     # favourites on the moneyline are favourites on the spread
     assert ((df.home_ml < -200) & (df.close_spread > 0)).sum() == 0
+
+
+def test_ncaab_names_never_fall_back_to_another_school():
+    import pytest
+    from edgesim.data.college import resolve_ncaab
+    from edgesim.providers.espn import _team_key
+    try:
+        assert resolve_ncaab("Kentucky Wildcats") == "1246"
+    except FileNotFoundError:
+        pytest.skip("historical data not downloaded")
+    for n in ("Kentucky Christian Knights", "Kentucky State Thorobreds"):
+        assert resolve_ncaab(n) is None
+    assert resolve_ncaab("Lehigh Mountain Hawks") is not None
+    assert resolve_ncaab("San José State Spartans") == resolve_ncaab("San Jose State")
+    kc = dict(location="Kentucky Christian", displayName="Kentucky Christian Knights", name="Knights")
+    assert not str(_team_key(kc, "ncaab")).isdigit()
+    uk = dict(location="Kentucky", displayName="Kentucky Wildcats", name="Wildcats")
+    assert _team_key(uk, "ncaab") == "1246"
+    for loc, disp, mascot in (("UAlbany", "UAlbany Great Danes", "Great Danes"),
+                              ("UT Rio Grande Valley", "UT Rio Grande Valley Vaqueros", "Vaqueros"),
+                              ("Queens University", "Queens University Royals", "Royals"),
+                              ("LSU New Orleans", "LSU New Orleans Privateers", "Privateers")):
+        assert str(_team_key(dict(location=loc, displayName=disp, name=mascot), "ncaab")).isdigit(), disp

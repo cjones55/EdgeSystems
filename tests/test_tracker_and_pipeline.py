@@ -25,7 +25,7 @@ def test_log_and_grade(tmp_path, monkeypatch):
         dict(home="BOS", away="MIA", market="spread", side="away", point=4.5, price=-110, pulled_at="1"),
         dict(home="BOS", away="MIA", market="spread", side="home", point=-6.0, price=-110, pulled_at="2"),
         dict(home="BOS", away="MIA", market="spread", side="away", point=6.0, price=-110, pulled_at="2"),
-    ]).to_csv(snaps / "2026-11-04.csv", index=False)
+    ]).to_csv(snaps / "nba_2026-11-04.csv", index=False)
     plays = pd.DataFrame([dict(game="MIA @ BOS", home="BOS", away="MIA", market="spread",
                                side="home", line=-4.5, pick="BOS -4.5", price=-110, book="dk",
                                tier="A: model + sharp", model_prob=.6, blended_prob=.55,
@@ -66,3 +66,34 @@ def test_backtest_walk_forward_has_no_lookahead():
     g2.loc[g2.index[-1], "home_pts"] += 80            # tamper with the final game only
     b = walk_forward(g2, sim=SimConfig(n_sims=500))
     assert a.exp_home.iloc[-1] == pytest.approx(b.exp_home.iloc[-1])
+
+
+def test_data_notes_name_the_season_and_new_teams():
+    from datetime import date
+    import pandas as pd
+    from edgesim.pipeline import data_notes
+    r = pd.DataFrame(dict(date=pd.to_datetime(["2026-03-10", "2026-11-08"]), season=[2026, 2027],
+                          home=["1101", "1102"], away=["1103", "1104"]))
+    notes = data_notes(r, [dict(home="1101", away="Zeta U")], date(2026, 11, 10), "ncaab")
+    assert "1 games so far this season (2026-27)" in notes[0]
+    assert "Zeta U" in notes[1]
+    assert "(2026)" in data_notes(r.assign(season=[2025, 2026]), [], date(2026, 11, 10), "ncaaf")[0]
+
+
+def test_ncaab_live_results_drop_non_d1_games(monkeypatch):
+    from datetime import date
+    import pandas as pd
+    from edgesim import pipeline
+    from edgesim.providers import espn
+    rows = pd.DataFrame(dict(date=pd.to_datetime(["2026-11-05", "2026-11-06"]), season=[2027, 2027],
+                             home=["1242", "1242"], away=["Apprentice School", "1246"],
+                             home_pts=[110, 80], away_pts=[40, 75], neutral=[False, False],
+                             espn_spread=[None, -4.5], espn_total=[None, 150.0]))
+    monkeypatch.setattr(espn, "results", lambda *a, **k: rows.copy())
+    try:
+        res = pipeline.live_results(date(2026, 11, 7), "ncaab")
+    except FileNotFoundError:
+        import pytest
+        pytest.skip("historical data not downloaded")
+    new = res[res.date >= "2026-11-01"]
+    assert len(new) == 1 and new.iloc[0].away == "1246"

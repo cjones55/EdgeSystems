@@ -35,18 +35,106 @@ TEAMS: dict[str, tuple[str, tuple[str, ...]]] = {
     "WAS": ("Washington Wizards", ("Wizards", "Washington", "WSH")),
 }
 
-_LOOKUP: dict[str, str] = {}
-for code, (full, aliases) in TEAMS.items():
-    for key in (code, full, *aliases):
-        _LOOKUP[key.lower().replace(" ", "")] = code
+NFL_TEAMS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "ARI": ("Arizona Cardinals", ("Cardinals", "Arizona")),
+    "ATL": ("Atlanta Falcons", ("Falcons", "Atlanta")),
+    "BAL": ("Baltimore Ravens", ("Ravens", "Baltimore")),
+    "BUF": ("Buffalo Bills", ("Bills", "Buffalo")),
+    "CAR": ("Carolina Panthers", ("Panthers", "Carolina")),
+    "CHI": ("Chicago Bears", ("Bears", "Chicago")),
+    "CIN": ("Cincinnati Bengals", ("Bengals", "Cincinnati")),
+    "CLE": ("Cleveland Browns", ("Browns", "Cleveland")),
+    "DAL": ("Dallas Cowboys", ("Cowboys", "Dallas")),
+    "DEN": ("Denver Broncos", ("Broncos", "Denver")),
+    "DET": ("Detroit Lions", ("Lions", "Detroit")),
+    "GB": ("Green Bay Packers", ("Packers", "Green Bay", "GNB")),
+    "HOU": ("Houston Texans", ("Texans", "Houston")),
+    "IND": ("Indianapolis Colts", ("Colts", "Indianapolis")),
+    "JAX": ("Jacksonville Jaguars", ("Jaguars", "Jacksonville", "JAC")),
+    "KC": ("Kansas City Chiefs", ("Chiefs", "Kansas City", "KCChiefs", "Kansas", "KAN")),
+    "LV": ("Las Vegas Raiders", ("Raiders", "Oakland", "Oakland Raiders", "Las Vegas", "OAK", "LVR")),
+    "LAC": ("Los Angeles Chargers", ("Chargers", "SanDiego", "San Diego", "San Diego Chargers", "SD")),
+    "LAR": ("Los Angeles Rams", ("Rams", "St.Louis", "St Louis", "St. Louis Rams", "STL", "LA")),
+    "MIA": ("Miami Dolphins", ("Dolphins", "Miami")),
+    "MIN": ("Minnesota Vikings", ("Vikings", "Minnesota")),
+    "NE": ("New England Patriots", ("Patriots", "New England", "NWE")),
+    "NO": ("New Orleans Saints", ("Saints", "New Orleans", "NOR")),
+    "NYG": ("New York Giants", ("Giants",)),
+    "NYJ": ("New York Jets", ("Jets",)),
+    "PHI": ("Philadelphia Eagles", ("Eagles", "Philadelphia")),
+    "PIT": ("Pittsburgh Steelers", ("Steelers", "Pittsburgh")),
+    "SF": ("San Francisco 49ers", ("49ers", "Fortyniners", "San Francisco", "SFO")),
+    "SEA": ("Seattle Seahawks", ("Seahawks", "Seattle")),
+    "TB": ("Tampa Bay Buccaneers", ("Buccaneers", "Tampa Bay", "Bucs", "TAM")),
+    "TEN": ("Tennessee Titans", ("Titans", "Tennessee")),
+    "WSH": ("Washington Commanders", ("Commanders", "Redskins", "Washington", "Football Team",
+                                      "Washington Football Team", "WAS")),
+}
+
+NHL_TEAMS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "ANA": ("Anaheim Ducks", ("Ducks", "Anaheim")),
+    "BOS": ("Boston Bruins", ("Bruins", "Boston")),
+    "BUF": ("Buffalo Sabres", ("Sabres", "Buffalo")),
+    "CGY": ("Calgary Flames", ("Flames", "Calgary")),
+    "CAR": ("Carolina Hurricanes", ("Hurricanes", "Carolina")),
+    "CHI": ("Chicago Blackhawks", ("Blackhawks", "Chicago")),
+    "COL": ("Colorado Avalanche", ("Avalanche", "Colorado")),
+    "CBJ": ("Columbus Blue Jackets", ("Blue Jackets", "Columbus")),
+    "DAL": ("Dallas Stars", ("Stars", "Dallas")),
+    "DET": ("Detroit Red Wings", ("Red Wings", "Detroit")),
+    "EDM": ("Edmonton Oilers", ("Oilers", "Edmonton")),
+    "FLA": ("Florida Panthers", ("Panthers", "Florida")),
+    "LA": ("Los Angeles Kings", ("Kings", "LA Kings", "LAK", "Los Angeles")),
+    "MIN": ("Minnesota Wild", ("Wild", "Minnesota")),
+    "MTL": ("Montreal Canadiens", ("Canadiens", "Montreal", "Montréal Canadiens")),
+    "NSH": ("Nashville Predators", ("Predators", "Nashville")),
+    "NJ": ("New Jersey Devils", ("Devils", "New Jersey", "NJD")),
+    "NYI": ("New York Islanders", ("Islanders", "NY Islanders")),
+    "NYR": ("New York Rangers", ("Rangers", "NY Rangers")),
+    "OTT": ("Ottawa Senators", ("Senators", "Ottawa")),
+    "PHI": ("Philadelphia Flyers", ("Flyers", "Philadelphia")),
+    "PIT": ("Pittsburgh Penguins", ("Penguins", "Pittsburgh")),
+    "SJ": ("San Jose Sharks", ("Sharks", "San Jose", "SJS")),
+    "SEA": ("Seattle Kraken", ("Kraken", "SeattleKraken", "Seattle")),
+    "STL": ("St. Louis Blues", ("Blues", "St.Louis", "St Louis", "St Louis Blues")),
+    "TB": ("Tampa Bay Lightning", ("Lightning", "Tampa Bay", "Tampa", "TBL")),
+    "TOR": ("Toronto Maple Leafs", ("Maple Leafs", "Toronto")),
+    # the Coyotes franchise moved to Utah in 2024; one rating history
+    "UTA": ("Utah Mammoth", ("Utah Hockey Club", "Utah", "UTAH", "Mammoth", "Coyotes",
+                             "Arizona Coyotes", "Phoenix", "Arizona", "Arizonas", "ARI")),
+    "VAN": ("Vancouver Canucks", ("Canucks", "Vancouver")),
+    "VGK": ("Vegas Golden Knights", ("Golden Knights", "Vegas", "VEG")),
+    "WSH": ("Washington Capitals", ("Capitals", "Washington", "WAS")),
+    "WPG": ("Winnipeg Jets", ("Jets", "Winnipeg", "WinnipegJets")),
+}
+
+TEAMS_BY_SPORT = {"nba": TEAMS, "nfl": NFL_TEAMS, "nhl": NHL_TEAMS}
 
 
-def to_code(name: str) -> str | None:
-    """Map any known spelling to a tricode, or None if unknown."""
+def _key(name: str) -> str:
+    import unicodedata
+    s = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+    return s.lower().replace(" ", "").replace(".", "")
+
+
+_LOOKUP: dict[str, dict[str, str]] = {}
+for _sport, _table in TEAMS_BY_SPORT.items():
+    _LOOKUP[_sport] = {}
+    for code, (full, aliases) in _table.items():
+        for key in (code, full, *aliases):
+            _LOOKUP[_sport][_key(key)] = code
+
+
+def to_code(name: str, sport: str = "nba") -> str | None:
+    """Map any known spelling to a team code for ``sport``, or None if unknown."""
     if not isinstance(name, str):
         return None
-    return _LOOKUP.get(name.lower().replace(" ", "").replace(".", ""))
+    return _LOOKUP[sport].get(_key(name))
 
 
-def full_name(code: str) -> str:
-    return TEAMS[code][0]
+def teams(sport: str = "nba") -> dict:
+    return TEAMS_BY_SPORT[sport]
+
+
+def full_name(code: str, sport: str = "nba") -> str:
+    return TEAMS_BY_SPORT[sport][code][0]

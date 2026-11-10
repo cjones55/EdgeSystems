@@ -88,3 +88,60 @@ def test_action_network_parser_is_defensive():
     assert df.iloc[0].home == "BOS" and df.iloc[0].tickets_pct_a == 70
     sp = to_splits(df)[("BOS", "MIA", "spread")]
     assert sp.money_a == 45
+
+
+def test_espn_odds_moneyline_both_formats():
+    from edgesim.providers.espn import parse_odds
+    old = parse_odds({"spread": -3.5, "overUnder": 49.5,
+                      "homeTeamOdds": {"moneyLine": -160, "spreadOdds": -115},
+                      "awayTeamOdds": {"moneyLine": 135, "spreadOdds": -105}})
+    assert (old["espn_home_ml"], old["espn_away_ml"]) == (-160, 135)
+    assert old["espn_spread_home_price"] == -115 and old["espn_open_spread"] is None
+    new = parse_odds({"moneyline": {"home": {"open": {"odds": "-170"}, "close": {"odds": "-140"}},
+                                    "away": {"close": {"odds": "+118"}}},
+                      "pointSpread": {"home": {"open": {"line": "-4.5"}, "close": {"line": "-2.5", "odds": "-115"}}},
+                      "total": {"over": {"open": {"line": "o48.5"}, "close": {"line": "o49.5", "odds": "EVEN"}}}})
+    assert (new["espn_home_ml"], new["espn_away_ml"], new["espn_open_home_ml"]) == (-140, 118, -170)
+    assert (new["espn_spread"], new["espn_open_spread"], new["espn_spread_home_price"]) == (-2.5, -4.5, -115)
+    assert (new["espn_total"], new["espn_open_total"], new["espn_over_price"]) == (49.5, 48.5, 100)
+
+
+def test_espn_odds_off_and_placeholder_prices_are_missing():
+    from edgesim.providers.espn import parse_odds
+    o = parse_odds({"spread": -34.5, "moneyline": {"home": {"close": {"odds": "OFF"}, "open": {"odds": "-100000"}},
+                                                   "away": {"close": {"odds": "OFF"}, "open": {"odds": "+5000"}}}})
+    assert o["espn_home_ml"] is None and o["espn_away_ml"] is None and o["espn_open_home_ml"] is None
+
+
+def test_espn_boxscore_skips_athletes_without_ids():
+    data = {"boxscore": {"players": [
+        {"team": {"abbreviation": "GS"}, "statistics": [{"labels": ["MIN", "PTS"], "athletes": [
+            {"athlete": {"displayName": "No Id"}, "stats": ["20", "10"]},
+            {"stats": ["12", "4"]},
+            {"athlete": {"id": "7", "displayName": "Has Id"}, "stats": ["30", "21"]}]}]},
+        {"statistics": []}]}}
+    rows = parse_boxscore(data, "401", pd.Timestamp("2026-11-04"))
+    assert [r["player"] for r in rows] == ["No Id", "Has Id"]
+
+
+def test_rating_points_blends_closing_line():
+    from types import SimpleNamespace
+    from edgesim.sports import rating_points
+    g = SimpleNamespace(home_pts=35, away_pts=7, close_spread=-7.0, close_total=50.0)
+    assert rating_points(g, 0.0) == (35, 7)
+    hp, ap = rating_points(g, 1.0)
+    assert (hp, ap) == (28.5, 21.5)
+    g.close_total = float("nan")
+    assert rating_points(g, 0.7) == (35, 7)      # no line: score only
+
+
+def test_zero_zero_splits_mean_no_data():
+    import pandas as pd
+    from edgesim.providers.public_betting import COLUMNS, to_splits
+    df = pd.DataFrame([dict(home="A", away="B", market="spread", open_line=None, current_line=-3,
+                            tickets_pct_a=0.0, money_pct_a=0.0),
+                       dict(home="C", away="D", market="spread", open_line=None, current_line=-3,
+                            tickets_pct_a=0.0, money_pct_a=12.0)], columns=COLUMNS)
+    s = to_splits(df)
+    assert s[("A", "B", "spread")].tickets_a is None and s[("A", "B", "spread")].money_a is None
+    assert s[("C", "D", "spread")].tickets_a == 0.0

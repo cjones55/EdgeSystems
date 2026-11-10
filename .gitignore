@@ -7,3 +7,5 @@ data/player_games.parquet
 data/snapshots/
 data/plays_log.csv
 reports/
+data/splits_history/
+data/watch/
