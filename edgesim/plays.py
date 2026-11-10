@@ -97,13 +97,17 @@ def evaluate_game(g: GameMarket, ratings: TeamRatings, splits: dict | None = Non
                    proj_away=s["away_pts"], home_win=s["home_win"], fair_spread=s["fair_spread"],
                    fair_total=s["fair_total"], market_spread=g.spread, market_total=g.total)
     cands = []
+    # early in a season the ratings know little, so the model gets less say vs the market
+    ramp = get(cfg.sport).blend_ramp_games
+    trust = 1.0 if not ramp else min(1.0, min(ratings.games.get(g.home, 0),
+                                              ratings.games.get(g.away, 0)) / ramp)
 
     def add(market, side_label, side_ab, p_model, p_push, price, other_price, line_desc,
             open_line, cur_line, book, side_key, line_val):
         mkt_p = no_vig_probs([price, other_price])[0]
         decided = 1 - p_push
         p_model_d = p_model / decided if decided > 0 else p_model
-        p_blend_d = mkt_p + cfg.blend[market] * (p_model_d - mkt_p)
+        p_blend_d = mkt_p + trust * cfg.blend[market] * (p_model_d - mkt_p)
         p_win = p_blend_d * decided
         ev = expected_value(p_win, price, p_push)
         split = splits.get((g.home, g.away, market))

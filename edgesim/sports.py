@@ -43,6 +43,9 @@ class Sport:
     # extra rating uncertainty early in a season: variance A / (n + c)^2 added to the
     # margin (first pair) and total (second pair), n = fewer games played this season
     early_var: tuple = (0.0, 1.0, 0.0, 1.0)
+    # the model's weight in the market blend ramps up from 0 over this many games of the
+    # season (0 = full weight from the first game)
+    blend_ramp_games: int = 0
 
     def sim(self, exp_home: float, exp_away: float, **overrides):
         return self.simulate(exp_home, exp_away, self.sim_config(**overrides))
@@ -113,12 +116,13 @@ SPORTS: dict[str, Sport] = {
         RatingParams(k=0.08, k_early=0.12, early_games=8, season_regress=0.85, league_avg=140,
                      hca=3.2, b2b=0, rest_bonus=0, recentre=False, err_cap=22),
         gamesim.simulate_game,
-        _cfg(gamesim.SimConfig, margin_sd=11.3, total_sd=14.5, rating_sd=2.1,
+        _cfg(gamesim.SimConfig, margin_sd=10.6, total_sd=14.5, rating_sd=0.5,
              rating_total_sd=4.0, minutes=40.0, ppp=1.04, pace_sd=3.5),
         range(2021, 2022), range(2022, 2027), college=True,
         espn_params={"groups": "50", "limit": "400"},
         # fitted on 2021-2023 closing lines: model error by games played vs late season
         early_var=(1400.0, 5.3, 1200.0, 4.2),
+        blend_ramp_games=10, market_weight=0.5,
         sharp=SharpConfig(rlm_min_move={"spread": 1.0, "total": 1.5, "ml": 0.02},
                           steam_move={"spread": 2.0, "total": 3.0, "ml": 0.05}),
         archive_note="results 2015-2026; near-closing lines from many books for 2020-21 to 2022-23"),
