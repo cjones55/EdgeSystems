@@ -426,7 +426,7 @@ with tabs[2]:
                                 step=0.5)
         neutral = c5.checkbox("Neutral", False)
         eh, ea = res.ctx.ratings.expected(home, away, neutral=neutral)
-        sim = spc.sim(eh, ea)
+        sim = spc.sim_matchup(res.ctx.ratings, home, away, eh, ea)
         s = sim.summary()
         m = st.columns(5)
         m[0].metric(f"{name[home]} win", f"{s['home_win']:.1%}")

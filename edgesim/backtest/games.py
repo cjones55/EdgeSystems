@@ -39,7 +39,7 @@ def walk_forward(games: pd.DataFrame, sport: str = "nba", params=None, sim=None,
                 cfg = type(sim)(**{**sim.__dict__, "seed": int(g.Index)})
                 res = sp.simulate(eh, ea, cfg)
             else:
-                res = sp.sim(eh, ea, n_sims=n_sims, seed=int(g.Index))
+                res = sp.sim_matchup(r, g.home, g.away, eh, ea, n_sims=n_sims, seed=int(g.Index))
             tie = float((res.margin == 0).mean())
             row = dict(idx=g.Index, exp_home=eh, exp_away=ea, p_home_win=res.p_home_win(),
                        p_tie=tie, fair_spread=res.fair_spread(), fair_total=res.fair_total())

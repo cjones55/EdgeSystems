@@ -88,7 +88,7 @@ def evaluate_game(g: GameMarket, ratings: TeamRatings, splits: dict | None = Non
     from .sports import get
     eh, ea = ratings.expected(g.home, g.away, g.home_rest, g.away_rest, g.neutral)
     eh, ea = max(eh + g.home_adj, 1.0), max(ea + g.away_adj, 1.0)
-    res = get(cfg.sport).sim(eh, ea, n_sims=cfg.n_sims, seed=cfg.seed)
+    res = get(cfg.sport).sim_matchup(ratings, g.home, g.away, eh, ea, n_sims=cfg.n_sims, seed=cfg.seed)
     s = res.summary()
     hn, an = g.home_name or g.home, g.away_name or g.away
     game = f"{an} {'vs' if g.neutral else '@'} {hn}"

@@ -126,7 +126,7 @@ def main(argv=None) -> int:
             today = date.today()
             r = pipeline.fit_ratings(pipeline.live_results(today, a.sport), pd.Timestamp(today), a.sport)
         eh, ea = r.expected(home, away, neutral=a.neutral)
-        sim = sp.sim(eh, ea)
+        sim = sp.sim_matchup(r, home, away, eh, ea)
         sm = sim.summary()
         print(f"{a.away} {'vs' if a.neutral else '@'} {a.home} ({sp.label}): projected "
               f"{sm['away_pts']:.1f} - {sm['home_pts']:.1f}")

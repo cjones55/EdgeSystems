@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Callable
 
+import numpy as np
+
 from . import gamesim, gamesim_nfl, gamesim_nhl
 from .ratings import RatingParams
 from .sharp import SharpConfig
@@ -38,9 +40,28 @@ class Sport:
     # ratings learn from a blend of the final score and the closing line's implied
     # score: 0 = scores only, 1 = closing lines only (games without lines use scores)
     market_weight: float = 0.0
+    # extra rating uncertainty early in a season: variance A / (n + c)^2 added to the
+    # margin (first pair) and total (second pair), n = fewer games played this season
+    early_var: tuple = (0.0, 1.0, 0.0, 1.0)
 
     def sim(self, exp_home: float, exp_away: float, **overrides):
         return self.simulate(exp_home, exp_away, self.sim_config(**overrides))
+
+    def early_sd(self, games_played: float) -> dict:
+        """rating_sd / rating_total_sd overrides for a game where the less experienced
+        team has played ``games_played`` games this season (empty when not needed)."""
+        am, cm, at, ct = self.early_var
+        if not am and not at:
+            return {}
+        base = self.sim_config()
+        n = max(float(games_played), 0.0)
+        return dict(rating_sd=float(np.hypot(base.rating_sd, np.sqrt(am / (n + cm) ** 2))),
+                    rating_total_sd=float(np.hypot(base.rating_total_sd, np.sqrt(at / (n + ct) ** 2))))
+
+    def sim_matchup(self, ratings, home: str, away: str, exp_home: float, exp_away: float,
+                    **overrides):
+        n = min(ratings.games.get(home, 0), ratings.games.get(away, 0))
+        return self.sim(exp_home, exp_away, **{**self.early_sd(n), **overrides})
 
 
 def _cfg(cls, **defaults):
@@ -89,13 +110,15 @@ SPORTS: dict[str, Sport] = {
         market_weight=0.7),
     "ncaab": Sport(
         "ncaab", "College basketball", "basketball/mens-college-basketball", "basketball_ncaab", 11,
-        RatingParams(k=0.08, k_early=0.12, early_games=8, season_regress=0.6, league_avg=140,
+        RatingParams(k=0.08, k_early=0.12, early_games=8, season_regress=0.85, league_avg=140,
                      hca=3.2, b2b=0, rest_bonus=0, recentre=False, err_cap=22),
         gamesim.simulate_game,
         _cfg(gamesim.SimConfig, margin_sd=11.3, total_sd=14.5, rating_sd=2.1,
              rating_total_sd=4.0, minutes=40.0, ppp=1.04, pace_sd=3.5),
         range(2021, 2022), range(2022, 2027), college=True,
         espn_params={"groups": "50", "limit": "400"},
+        # fitted on 2021-2023 closing lines: model error by games played vs late season
+        early_var=(1400.0, 5.3, 1200.0, 4.2),
         sharp=SharpConfig(rlm_min_move={"spread": 1.0, "total": 1.5, "ml": 0.02},
                           steam_move={"spread": 2.0, "total": 3.0, "ml": 0.05}),
         archive_note="results 2015-2026; near-closing lines from many books for 2020-21 to 2022-23"),

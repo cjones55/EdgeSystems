@@ -269,6 +269,12 @@ def live_results(day: date, sport: str = "nba", history_seasons: int = 2) -> pd.
     if not frames:
         raise RuntimeError(f"Could not load any {sport.upper()} results")
     res = pd.concat(frames, ignore_index=True).dropna(subset=["home", "away"])
+    if sport == "ncaab":
+        # ESPN lists D1 games against non-D1 schools (Apprentice School, Ecclesia...). The
+        # archive and the backtest only have D1 vs D1, and a 50-point win over a team rated
+        # "average new team" makes the D1 side look like a juggernaut. Keep D1 vs D1 only.
+        d1 = res.home.astype(str).str.isdigit() & res.away.astype(str).str.isdigit()
+        res = res[d1]
     res = res.sort_values("date").reset_index(drop=True)
     return add_rest(res)
 
@@ -312,6 +318,11 @@ def live_context(day: date | None = None, with_props: bool = False,
     results = live_results(day, sport, history_seasons)
     ratings = fit_ratings(results, d, sport)
     slate = [g for g in espn.scoreboard(day, live=True, sport=sport) if g["home"] and g["away"]]
+    if sport == "ncaab":
+        n = len(slate)
+        slate = [g for g in slate if str(g["home"]).isdigit() and str(g["away"]).isdigit()]
+        if len(slate) < n:
+            notes.append(f"Skipped {n - len(slate)} game(s) against non-Division I schools.")
     if not slate:
         notes.append(f"No {sp.label} games found for this date.")
     notes.extend(data_notes(results, slate, day, sport))
