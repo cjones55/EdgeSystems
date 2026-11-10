@@ -74,7 +74,8 @@ def _norm(s: str) -> str:
 
 _EXTRA_NCAAB = {
     "fau": "florida atlantic", "southeast missouri st": "southeast missouri state",
-    "ul monroe": "louisiana monroe", "miami": "miami fl", "app state": "appalachian state", "cal st bakersfield": "cal state bakersfield",
+    "ul monroe": "louisiana monroe", "ualbany": "albany ny", "ut rio grande valley": "utrgv",
+    "queens university": "queens nc", "lsu new orleans": "new orleans", "miami": "miami fl", "app state": "appalachian state", "cal st bakersfield": "cal state bakersfield",
     "texas a and m corpus christi": "texas a and m corpus christi", "queens": "queens nc",
     "mississippi valley st": "mississippi valley state", "arkansas pine bluff": "arkansas pine bluff",
     "bethune cookman": "bethune cookman", "texas a and m commerce": "east texas a and m",

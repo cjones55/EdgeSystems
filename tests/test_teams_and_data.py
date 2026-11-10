@@ -67,3 +67,8 @@ def test_ncaab_names_never_fall_back_to_another_school():
     assert not str(_team_key(kc, "ncaab")).isdigit()
     uk = dict(location="Kentucky", displayName="Kentucky Wildcats", name="Wildcats")
     assert _team_key(uk, "ncaab") == "1246"
+    for loc, disp, mascot in (("UAlbany", "UAlbany Great Danes", "Great Danes"),
+                              ("UT Rio Grande Valley", "UT Rio Grande Valley Vaqueros", "Vaqueros"),
+                              ("Queens University", "Queens University Royals", "Royals"),
+                              ("LSU New Orleans", "LSU New Orleans Privateers", "Privateers")):
+        assert str(_team_key(dict(location=loc, displayName=disp, name=mascot), "ncaab")).isdigit(), disp
