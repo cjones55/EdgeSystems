@@ -27,6 +27,16 @@ def base(sport: str = "nba") -> str:
 
 
 def _team_key(team: dict, sport: str) -> str | None:
+    if sport == "ncaab":
+        from ..data.college import _exact_ncaab
+        from ..resolve import resolve_ncaab
+        try:
+            hit = _exact_ncaab(team.get("location") or "")
+        except FileNotFoundError:
+            hit = None
+        # exact names only: "Kentucky Christian" must not become Kentucky
+        return hit or resolve_ncaab(team.get("displayName") or team.get("location") or "",
+                                    mascot=team.get("name") or "")
     if sport in ("ncaaf", "ncaab"):
         return resolve(team.get("location") or team.get("displayName", ""), sport, team.get("id"))
     return to_code(team.get("abbreviation", ""), sport) or to_code(team.get("displayName", ""), sport)
@@ -174,6 +184,33 @@ def results(start: date, end: date, workers: int = 8, sport: str = "nba") -> pd.
     df = df[df.season_type.fillna(2).isin([2, 3, 5])]
     df["season"] = df.date.map(lambda d: season_label(d.date(), sport))
     return df.sort_values("date").reset_index(drop=True)
+
+
+def fill_closing_lines(df: pd.DataFrame, sport: str, workers: int = 8) -> pd.DataFrame:
+    """Finished games often lose their line on the scoreboard; the game summary's
+    pick center keeps it. Fills espn_spread / espn_total where missing (cached)."""
+    if df.empty or "event_id" not in df.columns:
+        return df
+    df = df.copy()
+    for c in ("espn_spread", "espn_total"):
+        if c not in df.columns:
+            df[c] = None
+    need = df[df.espn_spread.isna() | df.espn_total.isna()]
+
+    def one(eid):
+        try:
+            data = _get(f"{base(sport)}/summary", {"event": eid}, cache_key=f"summary_{sport}_{eid}")
+            pc = data.get("pickcenter") or []
+            return parse_odds(pc[0]) if pc else {}
+        except Exception:
+            return {}
+    with ThreadPoolExecutor(workers) as ex:
+        got = list(ex.map(one, need.event_id))
+    for i, o in zip(need.index, got):
+        for c in ("espn_spread", "espn_total"):
+            if pd.isna(df.at[i, c]) and o.get(c) is not None:
+                df.at[i, c] = o[c]
+    return df
 
 
 # ---------------------------------------------------------------------------

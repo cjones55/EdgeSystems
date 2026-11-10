@@ -65,14 +65,16 @@ def load_ncaaf(raw: Path = RAW / "ncaaf") -> pd.DataFrame:
 
 # ---------------------------------------------------------------- basketball
 def _norm(s: str) -> str:
-    s = str(s).lower().replace("&", "and")
+    import unicodedata
+    s = unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode()
+    s = s.lower().replace("&", "and")
     s = re.sub(r"[^a-z0-9 ]", " ", s)
     return re.sub(r"\s+", " ", s).strip()
 
 
 _EXTRA_NCAAB = {
     "fau": "florida atlantic", "southeast missouri st": "southeast missouri state",
-    "louisiana monroe": "ul monroe", "cal st bakersfield": "cal state bakersfield",
+    "ul monroe": "louisiana monroe", "miami": "miami fl", "app state": "appalachian state", "cal st bakersfield": "cal state bakersfield",
     "texas a and m corpus christi": "texas a and m corpus christi", "queens": "queens nc",
     "mississippi valley st": "mississippi valley state", "arkansas pine bluff": "arkansas pine bluff",
     "bethune cookman": "bethune cookman", "texas a and m commerce": "east texas a and m",
@@ -94,17 +96,46 @@ def ncaab_names(raw: Path = RAW / "ncaab") -> dict[str, str]:
     return {str(i): n for i, n in zip(t.TeamID, t.TeamName)}
 
 
-def resolve_ncaab(name: str) -> str | None:
-    """Kaggle TeamID (as str) for an ESPN / Odds API / Torvik style name.
-    Tries the full name, then drops trailing words (mascots) one at a time."""
+# words that name a different school rather than a mascot: "Kentucky Christian" and
+# "Kentucky State" must not fall back to Kentucky when trailing words are dropped
+_SCHOOL_WORDS = {"state", "st", "christian", "tech", "college", "university", "univ", "a", "and",
+                 "m", "southern", "northern", "eastern", "western", "central", "wesleyan", "baptist",
+                 "methodist", "lutheran", "poly", "polytechnic", "international", "valley",
+                 "upstate", "southeastern", "northwestern", "southwestern", "northeastern",
+                 "coastal", "gulf", "atlantic", "pacific", "city", "institute", "of",
+                 "the", "at", "christ", "adventist", "nazarene", "mines", "tennessee", "carolina"}
+
+
+def _exact_ncaab(name: str) -> str | None:
     m = ncaab_spellings()
+    n = _norm(name)
+    for c in (n, _EXTRA_NCAAB.get(n, ""), n.replace(" st", " state"), n.replace(" state", " st"),
+              n.replace("saint ", "st "), n.replace("st ", "saint ", 1), n.replace("'", "")):
+        if c and c in m:
+            return str(m[c])
+    return None
+
+
+def resolve_ncaab(name: str, mascot: str | None = None) -> str | None:
+    """Kaggle TeamID (as str) for an ESPN / Odds API / Torvik style name.
+
+    With ``mascot`` (ESPN gives it), only the name itself or the name minus that
+    mascot may match. Otherwise trailing words are dropped one at a time, but
+    never words that name a different school (``Kentucky Christian``)."""
     words = _norm(name).split()
+    if mascot is not None:
+        mw = _norm(mascot).split()
+        if mw and words[-len(mw):] == mw:
+            hit = _exact_ncaab(" ".join(words[:-len(mw)]))
+            if hit:
+                return hit
+        return _exact_ncaab(" ".join(words))
     for k in range(len(words), 0, -1):
-        cand = " ".join(words[:k])
-        for c in (cand, _EXTRA_NCAAB.get(cand, ""), cand.replace(" st", " state"),
-                  cand.replace(" state", " st")):
-            if c and c in m:
-                return str(m[c])
+        if k < len(words) and set(words[k:]) & _SCHOOL_WORDS:
+            break
+        hit = _exact_ncaab(" ".join(words[:k]))
+        if hit:
+            return hit
     return None
 
 

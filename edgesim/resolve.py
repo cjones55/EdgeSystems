@@ -64,10 +64,10 @@ def resolve_ncaaf(name: str, espn_id: str | None = None) -> str:
     return str(name).strip()
 
 
-def resolve_ncaab(name: str) -> str:
+def resolve_ncaab(name: str, mascot: str | None = None) -> str:
     from .data.college import resolve_ncaab as r
     try:
-        out = r(name)
+        out = r(name, mascot)
     except FileNotFoundError:
         out = None
     return out or str(name).strip()

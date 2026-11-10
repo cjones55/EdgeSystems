@@ -260,6 +260,8 @@ def live_results(day: date, sport: str = "nba", history_seasons: int = 2) -> pd.
             pass
     if start <= day - timedelta(days=1):
         espn_res = espn.results(start, day - timedelta(days=1), sport=sport)
+        if not espn_res.empty and get_sport(sport).market_weight > 0:
+            espn_res = espn.fill_closing_lines(espn_res, sport)
         if not espn_res.empty:
             # ESPN keeps the closing consensus line on finished games
             espn_res = espn_res.assign(close_spread=espn_res.get("espn_spread"),
