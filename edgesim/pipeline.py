@@ -273,6 +273,26 @@ def live_results(day: date, sport: str = "nba", history_seasons: int = 2) -> pd.
     return add_rest(res)
 
 
+def data_notes(results: pd.DataFrame, slate: list[dict], day: date, sport: str) -> list[str]:
+    """How current the ratings are, and which teams on the slate have no history."""
+    from .providers.espn import season_label
+    from .resolve import display
+    if results.empty:
+        return []
+    season = season_label(day, sport)
+    cur = results[results.season.astype(str) == str(season)]
+    start = season - 1 if sport == "ncaab" else season      # college hoops is named for its end year
+    name = str(start) if sport in ("nfl", "ncaaf") else f"{start}-{str(start + 1)[-2:]}"
+    out = [f"Ratings use results through {results.date.max():%b %d, %Y}: "
+           f"{len(cur)} games so far this season ({name})."]
+    known = set(results.home) | set(results.away)
+    new = sorted({display(t, sport) for g in slate for t in (g["home"], g["away"]) if t not in known})
+    if new:
+        out.append(f"No past games for {len(new)} team(s), so they start at an average new-team "
+                   f"rating: {', '.join(new[:8])}{' ...' if len(new) > 8 else ''}.")
+    return out
+
+
 def get_sport(sport: str):
     from .sports import get
     return get(sport)
@@ -294,6 +314,7 @@ def live_context(day: date | None = None, with_props: bool = False,
     slate = [g for g in espn.scoreboard(day, live=True, sport=sport) if g["home"] and g["away"]]
     if not slate:
         notes.append(f"No {sp.label} games found for this date.")
+    notes.extend(data_notes(results, slate, day, sport))
 
     # --- markets
     cons = open_cons = pd.DataFrame()
